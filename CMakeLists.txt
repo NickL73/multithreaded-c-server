@@ -1,5 +1,5 @@
-cmake_minimum_required(3.25)
-project(PROJECT_NAME c_mutli_pingpong VERSION 1.0.0 LANGUAGES C)
+cmake_minimum_required(VERSION 3.25)
+project(c_mutli_pingpong VERSION 1.0.0 LANGUAGES C)
 
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_EXE_LINKER_FLAGS "-static")
