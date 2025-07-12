@@ -6,38 +6,48 @@
  */
 #include "debug_print.h"
 
+#include <errno.h>
+#include <poll.h>
 #include <signal.h>
 
 
 /* GLOBAL DEFINITIONS AND VALUES */
 #define SERVER_PORT 1337
-volatile sig_atomic_t should_shutdown = 0;
+volatile sig_atomic_t g_should_shutdown = 0;
 
 /* STATIC FUNCTION DECLARATIONS */
 static void sighandler(int signum);
+static int  setup_signal_handlers(void);
 
 int main(int argc, char * argv[])
 {
-    int err = 0;
+    int           err                = 0;
+    int           active_connections = 0;
+    struct pollfd pfd[10]            = {0};
 
-    /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM */
-    struct sigaction sa = {0};
-    sa.sa_handler       = sighandler;
-    sa.sa_flags         = 0;
-    if (0 != sigemptyset(&sa.sa_mask))
+    /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM and ignore SIGPIPE */
+    err = setup_signal_handlers();
+    if (0 != err)
     {
-        LOG_FATAL("Failed to empty server's signal set");
+        LOG_FATAL("Failed to setup signal handlers");
         goto end;
     }
 
-    if ((0 != sigaction(SIGINT, &sa, NULL)) || (0 != sigaction(SIGTERM, &sa, NULL)))
+    while (!g_should_shutdown)
     {
-        LOG_FATAL("Failed to set server's signal handler");
-        goto end;
+        err = poll(pfd, active_connections, -1);
+        if (-1 == err)
+        {
+            LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
+            if (EINTR == errno)
+            {
+                continue;
+            }
+
+            break;
+        }
     }
 
-    /* Don't let SIGPIPE break the server either, just ignore it */
-    (void)signal(SIGPIPE, SIG_IGN);
 
 end:
     return 0;
@@ -46,5 +56,29 @@ end:
 /* STATIC FUNCTION DEFINITIONS */
 static void sighandler(int signum)
 {
-    should_shutdown = 1;
+    g_should_shutdown = 1;
+}
+
+static int setup_signal_handlers(void)
+{
+    int              res = -1;
+    struct sigaction sa  = {0};
+    sa.sa_handler        = sighandler;
+    sa.sa_flags          = 0;
+    if (0 != sigemptyset(&sa.sa_mask))
+    {
+        LOG_ERROR("Failed to empty signal set");
+        return res;
+    }
+
+    if ((0 != sigaction(SIGINT, &sa, NULL)) || (0 != sigaction(SIGTERM, &sa, NULL)))
+    {
+        LOG_ERROR("Failed to set sigaction on SIGINT or SIGTERM");
+        return res;
+    }
+
+    /* Don't let SIGPIPE break the server either, just ignore it */
+    (void)signal(SIGPIPE, SIG_IGN);
+    res = 0;
+    return res;
 }
