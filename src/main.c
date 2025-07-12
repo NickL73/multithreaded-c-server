@@ -4,7 +4,8 @@
  * @date 7/11/25
  * @brief
  */
-#include "debug_print.h"
+#include "netio.h"
+#include "utils.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -22,6 +23,7 @@ static int  setup_signal_handlers(void);
 int main(int argc, char * argv[])
 {
     int           err                = 0;
+    int           sfd                = -1;
     int           active_connections = 0;
     struct pollfd pfd[10]            = {0};
 
@@ -30,6 +32,14 @@ int main(int argc, char * argv[])
     if (0 != err)
     {
         LOG_FATAL("Failed to setup signal handlers");
+        goto end;
+    }
+
+    /* Start the main server listening socket */
+    sfd = nl_start_listener("127.0.0.1", "1337");
+    if (-1 == sfd)
+    {
+        LOG_FATAL("Failed to start listening on socket");
         goto end;
     }
 
@@ -56,6 +66,7 @@ end:
 /* STATIC FUNCTION DEFINITIONS */
 static void sighandler(int signum)
 {
+    (void)signum;
     g_should_shutdown = 1;
 }
 

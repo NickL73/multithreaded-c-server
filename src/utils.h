@@ -1,11 +1,11 @@
 /**
- * @file debug_print.h
+ * @file utils.h
  * @author nick
  * @date 7/11/25
  * @brief
  */
-#ifndef DEBUG_PRINT_H
-#define DEBUG_PRINT_H
+#ifndef UTILS_H
+#define UTILS_H
 
 #ifdef NDEBUG
 #define LOG_MSG(level, ...) ((void)0)
@@ -60,4 +60,4 @@ typedef enum
 #define LOG_ERROR(...) LOG_MSG(LOG_ERROR, __VA_ARGS__)
 #define LOG_FATAL(...) LOG_MSG(LOG_FATAL, __VA_ARGS__)
 
-#endif // DEBUG_PRINT_H
+#endif // UTILS_H
