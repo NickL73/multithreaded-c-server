@@ -1,0 +1,13 @@
+[tool.poetry]
+name = "pingpong-client"
+version = "1.0.0"
+description = ""
+authors = ["Nicholas Lunsford <nick.lunsford73@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
