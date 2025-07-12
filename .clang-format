@@ -39,7 +39,7 @@ BreakStringLiterals: true
 ColumnLimit: 120
 ContinuationIndentWidth: 2
 DerivePointerAlignment: false
-IncludeBlocks: Preserve
+IncludeBlocks: Regroup
 IndentCaseBlocks: true
 IndentCaseLabels: true
 IndentGotoLabels: false
