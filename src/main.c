@@ -12,8 +12,14 @@
 #include <signal.h>
 #include <unistd.h>
 
+/* COMMON STRUCTURES */
+typedef struct conn_context
+{
+    int fd;
+    int is_active;
+};
 
-/* GLOBAL DEFINITIONS AND VALUES */
+/* GLOBAL VARIABLES AND VALUES */
 #define SERVER_PORT 1337
 volatile sig_atomic_t g_should_shutdown = 0;
 
@@ -27,6 +33,8 @@ int main(int argc, char * argv[])
     int           sfd            = -1;
     int           active_sockets = 0;
     struct pollfd pfd[10]        = {0};
+
+    // TODO: Start a single thread to handle signals
 
     /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM and ignore SIGPIPE */
     err = setup_signal_handlers();
@@ -44,7 +52,7 @@ int main(int argc, char * argv[])
         goto end;
     }
 
-    /* Add the listening socket to the poll set */
+    /* TODO: Add the listening socket to the poll set */
     active_sockets += 1;
 
     while (!g_should_shutdown)
