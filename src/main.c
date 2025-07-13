@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <unistd.h>
 
 
 /* GLOBAL DEFINITIONS AND VALUES */
@@ -22,10 +23,10 @@ static int  setup_signal_handlers(void);
 
 int main(int argc, char * argv[])
 {
-    int           err                = 0;
-    int           sfd                = -1;
-    int           active_connections = 0;
-    struct pollfd pfd[10]            = {0};
+    int           err            = 0;
+    int           sfd            = -1;
+    int           active_sockets = 0;
+    struct pollfd pfd[10]        = {0};
 
     /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM and ignore SIGPIPE */
     err = setup_signal_handlers();
@@ -43,9 +44,12 @@ int main(int argc, char * argv[])
         goto end;
     }
 
+    /* Add the listening socket to the poll set */
+    active_sockets += 1;
+
     while (!g_should_shutdown)
     {
-        err = poll(pfd, active_connections, -1);
+        err = poll(pfd, active_sockets, -1);
         if (-1 == err)
         {
             LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
@@ -56,6 +60,29 @@ int main(int argc, char * argv[])
 
             break;
         }
+
+        for (int conn = 0; conn < active_sockets; conn++)
+        {
+            if (pfd[conn].revents & POLLIN)
+            {
+                LOG_INFO("Received data on connection %d", conn);
+                err = nl_handle_incoming_data(pfd[conn].fd);
+            }
+
+            if (pfd[conn].revents & (POLLHUP | POLLERR | POLLNVAL))
+            {
+                LOG_INFO("Connection %d closed", conn);
+                // TODO: Mark as ready for removal and close the socket
+            }
+
+            if (pfd[conn].revents & POLLOUT)
+            {
+                LOG_INFO("Connection %d is ready for writing", conn);
+                // TODO: Send the data
+            }
+        }
+
+        // TODO: Compact array down for closed connections
     }
 
 
