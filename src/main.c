@@ -38,10 +38,9 @@ volatile sig_atomic_t g_should_shutdown = 0;
 static void sighandler(int signum);
 static int  setup_signal_handlers(void);
 static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue);
-static int  destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
-
+static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
 static int  setup_conn_mgmt_queues(conn_mgmt_queue_t ** pp_new_conns, conn_mgmt_queue_t ** pp_del_conns);
-static void teardown_conn_mgmt_queues(ezqueue_t * p_new_conns, ezqueue_t * p_del_conns);
+static void teardown_conn_mgmt_queues(conn_mgmt_queue_t * p_new_conns, conn_mgmt_queue_t * p_del_conns);
 
 int main(int argc, char * argv[])
 {
@@ -50,8 +49,8 @@ int main(int argc, char * argv[])
     int           active_sockets = 0;
     struct pollfd pfd[10]        = {0};
 
-    ezqueue_t * p_new_conns = NULL;
-    ezqueue_t * p_del_conns = NULL;
+    conn_mgmt_queue_t * p_new_conns = NULL;
+    conn_mgmt_queue_t * p_del_conns = NULL;
 
     // TODO: Start a single thread to handle signals
 
@@ -229,71 +228,62 @@ err:
     return -1;
 }
 
-static int setup_conn_mgmt_queues(ezqueue_t ** pp_new_conns, ezqueue_t ** pp_del_conns)
+static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
+{
+    assert(NULL != p_queue);
+
+    (void)pthread_mutex_destroy(p_queue->p_mutex);
+    free(p_queue->p_queue);
+    p_queue->p_mutex = NULL;
+
+    (void)ezq_deinit(p_queue->p_queue);
+    free(p_queue->p_queue);
+    p_queue->p_queue = NULL;
+
+    free(p_queue);
+}
+
+static int setup_conn_mgmt_queues(conn_mgmt_queue_t ** pp_new_conns, conn_mgmt_queue_t ** pp_del_conns)
 {
     assert(NULL != pp_new_conns);
     assert(NULL != pp_del_conns);
 
     int res = -1;
 
-    ezqueue_t * p_new_conn = NULL;
-    ezqueue_t * p_del_conn = NULL;
+    conn_mgmt_queue_t * p_new_conn = NULL;
+    conn_mgmt_queue_t * p_del_conn = NULL;
 
-    p_new_conn = (ezqueue_t *)malloc(sizeof(ezqueue_t));
-    if (NULL == p_new_conn)
+    res = create_mgmt_queue(&p_new_conn);
+    if (0 != res)
     {
-        LOG_ERROR("Failed to allocate memory for ezqueue_t for incoming conns");
+        LOG_ERROR("Failed to create conn_mgmt_queue for new conns");
         goto err;
     }
 
-    res = ezq_init(p_new_conn, INITIAL_Q_SIZE);
+    res = create_mgmt_queue(&p_del_conn);
     if (0 != res)
     {
-        LOG_ERROR("Failed to initialize ezqueue for incoming conns");
+        LOG_ERROR("Failed to create conn_mgmt_queue for closed conns");
         goto cleanup_new_conn;
-    }
-
-    p_del_conn = (ezqueue_t *)malloc(sizeof(ezqueue_t));
-    if (NULL == p_del_conn)
-    {
-        LOG_ERROR("Failed to allocate memory for ezqueue_t for closed conns");
-        goto destroy_new_conn;
-    }
-
-    res = ezq_init(p_del_conn, SERVER_PORT);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to initialize ezqueue for closed conns");
-        goto cleanup_del_conn;
     }
 
     *pp_new_conns = p_new_conn;
     *pp_del_conns = p_del_conn;
-    return res;
-
-cleanup_del_conn:
-    free(p_del_conn);
-    p_del_conn = NULL;
-
-destroy_new_conn:
-    (void)ezq_deinit(p_new_conn);
+    return 0;
 
 cleanup_new_conn:
-    free(p_new_conn);
+    destroy_mgmt_queue(p_new_conn);
     p_new_conn = NULL;
 
 err:
-    return res;
+    return -1;
 }
 
-static void teardown_conn_mgmt_queues(ezqueue_t * p_new_conns, ezqueue_t * p_del_conns)
+static void teardown_conn_mgmt_queues(conn_mgmt_queue_t * p_new_conns, conn_mgmt_queue_t * p_del_conns)
 {
     assert(NULL != p_new_conns);
     assert(NULL != p_del_conns);
 
-    (void)ezq_deinit(p_new_conns);
-    (void)ezq_deinit(p_del_conns);
-
-    free(p_new_conns);
-    free(p_del_conns);
+    destroy_mgmt_queue(p_new_conns);
+    destroy_mgmt_queue(p_del_conns);
 }
