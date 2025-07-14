@@ -11,16 +11,23 @@
 #include <assert.h>
 #include <errno.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 
-/* COMMON STRUCTURES */
+/* SERVER STRUCTURES */
 typedef struct conn_context
 {
     int fd;
     int is_active;
 };
+
+typedef struct conn_mgmt_queue
+{
+    ezqueue_t *       p_queue;
+    pthread_mutex_t * p_mutex;
+} conn_mgmt_queue_t;
 
 /* GLOBAL VARIABLES AND VALUES */
 #define INITIAL_Q_SIZE 16
@@ -30,7 +37,10 @@ volatile sig_atomic_t g_should_shutdown = 0;
 /* STATIC FUNCTION DECLARATIONS */
 static void sighandler(int signum);
 static int  setup_signal_handlers(void);
-static int  setup_conn_mgmt_queues(ezqueue_t ** pp_new_conns, ezqueue_t ** pp_del_conns);
+static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue);
+static int  destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
+
+static int  setup_conn_mgmt_queues(conn_mgmt_queue_t ** pp_new_conns, conn_mgmt_queue_t ** pp_del_conns);
 static void teardown_conn_mgmt_queues(ezqueue_t * p_new_conns, ezqueue_t * p_del_conns);
 
 int main(int argc, char * argv[])
@@ -148,6 +158,75 @@ static int setup_signal_handlers(void)
     (void)signal(SIGPIPE, SIG_IGN);
     res = 0;
     return res;
+}
+
+static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue)
+{
+    assert(NULL != pp_queue);
+
+    int                 res     = -1;
+    conn_mgmt_queue_t * p_queue = NULL;
+    ezqueue_t *         p_ezq   = NULL;
+    pthread_mutex_t *   p_mutex = NULL;
+
+    p_queue = (conn_mgmt_queue_t *)malloc(sizeof(conn_mgmt_queue_t));
+    if (NULL == p_queue)
+    {
+        LOG_ERROR("Failed to allocate memory for conn_mgmt_queue_t");
+        goto err;
+    }
+
+    p_ezq = (ezqueue_t *)malloc(sizeof(ezqueue_t));
+    if (NULL == p_ezq)
+    {
+        LOG_ERROR("Failed to allocate memory for ezqueue_t");
+        goto cleanup_queue;
+    }
+
+    res = ezq_init(p_ezq, INITIAL_Q_SIZE);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to initialize ezqueue");
+        goto cleanup_ezq;
+    }
+
+    p_mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
+    if (NULL == p_mutex)
+    {
+        LOG_ERROR("Failed to allocate memory for mutex");
+        goto deinit_ezq;
+    }
+
+    res = pthread_mutex_init(p_mutex, NULL);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to initialize mutex");
+        goto cleanup_mutex;
+    }
+
+    p_queue->p_queue = p_ezq;
+    p_queue->p_mutex = p_mutex;
+    *pp_queue        = p_queue;
+
+    return 0;
+
+cleanup_mutex:
+    free(p_mutex);
+    p_mutex = NULL;
+
+deinit_ezq:
+    (void)ezq_deinit(p_ezq);
+
+cleanup_ezq:
+    free(p_ezq);
+    p_ezq = NULL;
+
+cleanup_queue:
+    free(p_queue);
+    p_queue = NULL;
+
+err:
+    return -1;
 }
 
 static int setup_conn_mgmt_queues(ezqueue_t ** pp_new_conns, ezqueue_t ** pp_del_conns)
