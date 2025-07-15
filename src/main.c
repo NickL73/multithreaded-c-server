@@ -65,6 +65,8 @@ int main(int argc, char * argv[])
         goto end;
     }
 
+    /* Create the arrays for polling and for holding more detailed connection contexts */
+
     /* Start the main server listening socket */
     sfd = nl_start_listener("127.0.0.1", "1337");
     if (-1 == sfd)
@@ -75,6 +77,10 @@ int main(int argc, char * argv[])
 
     /* TODO: Add the listening socket to the poll set */
     active_sockets += 1;
+
+    /* TODO: Create conn_ctx_t for listener */
+    /* TODO: Add conn_ctx_t for listener to new connections queue */
+    /* TODO: connmgr_add_new */
 
     while (!g_should_shutdown)
     {
@@ -95,7 +101,10 @@ int main(int argc, char * argv[])
             if (pfd[conn].revents & POLLIN)
             {
                 LOG_INFO("Received data on connection %d", conn);
-                // err = nl_handle_incoming_data(pfd[conn].fd);
+                if (0 == conn)
+                {
+                    err = nl_accept(pfd[conn].fd, p_new_conns);
+                }
             }
 
             if (pfd[conn].revents & (POLLHUP | POLLERR | POLLNVAL))

@@ -4,6 +4,7 @@
 
 #include "netio.h"
 
+#include "connmgr.h"
 #include "utils.h"
 
 #include <assert.h>
@@ -19,7 +20,6 @@
 #define LISTENER_IDX       0
 
 /* STATIC FUNCTION DECLARATIONS */
-static int nl_accept(int fd, conn_mgmt_queue_t * p_new_conns);
 static int nl_read(conn_ctx_t * p_ctx);
 
 /* PUBLIC FUNCTION DEFINITONS */
@@ -108,46 +108,7 @@ end:
     return fd;
 }
 
-int nl_set_nonblocking(const int fd)
-{
-    int       res   = -1;
-    const int flags = fcntl(fd, F_GETFL, 0);
-    if (-1 != flags)
-    {
-        res = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-
-    return res;
-}
-
-int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
-{
-    int res = -1;
-
-    if ((NULL == p_ctx) || (NULL == p_new_conns))
-    {
-        LOG_ERROR("Invalid argument");
-        goto end;
-    }
-
-    if (LISTENER_IDX == p_ctx->idx)
-    {
-        res = nl_accept(p_ctx->fd, p_new_conns);
-    }
-
-    else
-    {
-        res = nl_read(p_ctx);
-    }
-
-
-end:
-    return res;
-}
-
-/* STATIC FUNCTION DEFINITIONS */
-
-static int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
+int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
 {
     assert(NULL != p_new_conns);
     assert(NULL != p_new_conns->p_queue);
@@ -235,6 +196,46 @@ cleanup_ctx:
     p_ctx = NULL;
     return -1;
 }
+
+int nl_set_nonblocking(const int fd)
+{
+    int       res   = -1;
+    const int flags = fcntl(fd, F_GETFL, 0);
+    if (-1 != flags)
+    {
+        res = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    return res;
+}
+
+int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
+{
+    int res = -1;
+
+    if ((NULL == p_ctx) || (NULL == p_new_conns))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    if (LISTENER_IDX == p_ctx->idx)
+    {
+        res = nl_accept(p_ctx->fd, p_new_conns);
+    }
+
+    else
+    {
+        res = nl_read(p_ctx);
+    }
+
+
+end:
+    return res;
+}
+
+/* STATIC FUNCTION DEFINITIONS */
+
 
 static int nl_read(conn_ctx_t * p_ctx)
 {
