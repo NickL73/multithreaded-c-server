@@ -6,6 +6,8 @@
 
 #include "utils.h"
 
+#include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -14,6 +16,8 @@
 
 #define CONNECTION_BACKLOG 100
 #define LISTENER_IDX       0
+
+static int nl_accept_new(int fd, conn_mgmt_queue_t * p_new_conns);
 
 int nl_start_listener(char * p_host, char * p_service)
 {
@@ -112,7 +116,7 @@ int nl_set_nonblocking(const int fd)
     return res;
 }
 
-int nl_handle_sock_data_in(socket_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
+int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
 {
     int res = -1;
 
@@ -127,6 +131,7 @@ int nl_handle_sock_data_in(socket_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns
         // TODO: Accept Connection
         // Create socket_ctx_t
         // Add to new_conns queue
+        // Do all of that in a loop until -1 with EAGAIN/EWOULDBLOCK
     }
 
     else
@@ -137,4 +142,28 @@ int nl_handle_sock_data_in(socket_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns
 
 end:
     return res;
+}
+
+static int nl_accept(int fd, conn_mgmt_queue_t * p_new_conns)
+{
+    assert(NULL != p_new_conns);
+    int clifd = -1;
+
+    while (1)
+    {
+        clifd = accept(fd, NULL, NULL);
+        if (-1 == clifd)
+        {
+            break;
+        }
+
+        // TODO: Save off the fd
+    }
+
+    if ((EAGAIN == errno) || (EWOULDBLOCK == errno))
+    {
+        return 0;
+    }
+
+    return -1;
 }

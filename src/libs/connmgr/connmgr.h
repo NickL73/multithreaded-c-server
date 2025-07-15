@@ -12,6 +12,13 @@
 
 #include <pthread.h>
 
+typedef struct conn_ctx
+{
+    int idx;
+    int fd;
+    struct sockaddr_storage;
+} conn_ctx_t;
+
 typedef struct conn_mgmt_queue
 {
     ezqueue_t *       p_queue;
