@@ -10,13 +10,14 @@
 #include "connmgr.h"
 #include "ezqueue.h"
 
+#include <netdb.h>
 #include <pthread.h>
 
 typedef struct conn_ctx
 {
-    int idx;
-    int fd;
-    struct sockaddr_storage;
+    int                     idx;
+    int                     fd;
+    struct sockaddr_storage addr;
 } conn_ctx_t;
 
 typedef struct conn_mgmt_queue
