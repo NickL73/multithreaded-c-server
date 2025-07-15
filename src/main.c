@@ -101,6 +101,7 @@ int main(int argc, char * argv[])
             if (pfd[conn].revents & POLLIN)
             {
                 LOG_INFO("Received data on connection %d", conn);
+                // TODO: Check if we're at the maximum number of connections (this is really impractical)
                 if (0 == conn)
                 {
                     err = nl_accept(pfd[conn].fd, p_new_conns);

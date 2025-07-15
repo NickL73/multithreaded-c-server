@@ -16,6 +16,7 @@
 
 static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items);
 static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
+static int  add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 {
@@ -71,7 +72,6 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
     p_new_conns        = NULL;
 
     p_mgr->max_conns        = initial_max_conns;
-    p_mgr->num_total_conns  = 0;
     p_mgr->num_active_conns = 0;
 
     return 0;
@@ -118,7 +118,65 @@ end:
 
 int connmgr_add_new_connections(conn_mgr_t * p_mgr)
 {
-    return -1;
+    int         res           = -1;
+    ezqueue_t * p_new_conns_q = NULL;
+    void *      p_new_conn    = NULL;
+
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_new_conns) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    p_new_conns_q = p_mgr->p_new_conns->p_queue;
+
+    /* TODO: Consider whether I'm holding the lock too long. Is it more efficient to lock/unlock repeatedly or block? */
+    res = pthread_mutex_lock(p_mgr->p_new_conns->p_mutex);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to lock mutex");
+        goto end;
+    }
+
+    while (0 != p_new_conns_q->num_items)
+    {
+        res = ezq_dequeue(p_new_conns_q, &p_new_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to dequeue from conn_mgmt_queue");
+            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
+            goto end;
+        }
+
+        res = ezarr_push(p_mgr->p_conns, p_new_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to push to ezarray_t");
+            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
+            goto end;
+        }
+
+        res = add_to_pollfd(((conn_ctx_t *)p_new_conn)->fd, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to add to poll array");
+            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
+        }
+
+        /* The array may have resized, so we should just update the connmgr to reflect, just in case */
+        p_mgr->max_conns = p_mgr->p_conns->max_items;
+        p_mgr->num_active_conns++;
+    }
+
+    res = pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to unlock mutex");
+        // Fallthrough to return regardless
+    }
+
+end:
+    return res;
 }
 
 int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
@@ -249,4 +307,55 @@ static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
     p_queue->p_queue = NULL;
 
     free(p_queue);
+}
+
+static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size)
+{
+    assert(NULL != p_pfds);
+
+    int             res     = -1;
+    struct pollfd * p_tmp   = NULL;
+    uint16_t        new_max = 0;
+
+    if (cur_size == max_size)
+    {
+        LOG_INFO("Poll array needs to be resized. Attempting.");
+
+        if (UINT16_MAX == cur_size)
+        {
+            LOG_ERROR("Poll array is full and cannot be resized");
+            goto end;
+        }
+
+        if ((UINT16_MAX / 2) < cur_size)
+        {
+            LOG_WARN("Resizing poll array by double would overflow. Will attempt to resize to UINT16_MAX. Future "
+                     "resizes will fail.");
+            new_max = UINT16_MAX;
+        }
+
+        else
+        {
+            new_max = cur_size * 2;
+        }
+
+        p_tmp = realloc(p_pfds, sizeof(struct pollfd) * new_max);
+        if (NULL == p_tmp)
+        {
+            LOG_ERROR("Failed to resize poll array");
+            goto end;
+        }
+
+        p_pfds = p_tmp;
+        p_tmp  = NULL;
+    }
+
+    p_pfds[cur_size].fd      = fd;
+    p_pfds[cur_size].events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
+    p_pfds[cur_size].revents = 0;
+
+    res = 0;
+
+end:
+    return res;
 }

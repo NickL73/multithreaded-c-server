@@ -19,7 +19,6 @@ typedef struct conn_ctx
 {
     int                     idx;
     int                     fd;
-    bool                    b_is_active;
     struct sockaddr_storage addr;
 } conn_ctx_t;
 
@@ -35,7 +34,6 @@ typedef struct conn_mgr_t
     struct pollfd *     p_pfds;
     conn_mgmt_queue_t * p_new_conns;
     uint16_t            max_conns;
-    uint16_t            num_total_conns;
     uint16_t            num_active_conns;
 } conn_mgr_t;
 
