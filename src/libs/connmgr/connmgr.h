@@ -28,7 +28,7 @@ typedef struct conn_mgmt_queue
     pthread_mutex_t * p_mutex;
 } conn_mgmt_queue_t;
 
-typedef struct conn_mgr_t
+typedef struct conn_mgr
 {
     ezarray_t *         p_conns;
     struct pollfd *     p_pfds;

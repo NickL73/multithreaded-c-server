@@ -5,7 +5,6 @@
  * @brief
  */
 #include "connmgr.h"
-#include "ezqueue.h"
 #include "netio.h"
 #include "utils.h"
 
@@ -17,25 +16,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-/* SERVER STRUCTURES */
-typedef struct conn_context
-{
-    int fd;
-    int is_active;
-};
 
 /* GLOBAL VARIABLES AND VALUES */
-#define INITIAL_Q_SIZE 16
-#define SERVER_PORT    1337
+#define INITIAL_MAX_CONNS 16
+#define SERVER_PORT       1337
 volatile sig_atomic_t g_should_shutdown = 0;
 
 /* STATIC FUNCTION DECLARATIONS */
 static void sighandler(int signum);
 static int  setup_signal_handlers(void);
-static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue);
-static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
-static int  setup_conn_mgmt_queues(conn_mgmt_queue_t ** pp_new_conns, conn_mgmt_queue_t ** pp_del_conns);
-static void teardown_conn_mgmt_queues(conn_mgmt_queue_t * p_new_conns, conn_mgmt_queue_t * p_del_conns);
 
 int main(int argc, char * argv[])
 {
@@ -44,8 +33,7 @@ int main(int argc, char * argv[])
     int           active_sockets = 0;
     struct pollfd pfd[10]        = {0};
 
-    conn_mgmt_queue_t * p_new_conns = NULL;
-    conn_mgmt_queue_t * p_del_conns = NULL;
+    conn_mgr_t conn_mgr = {0};
 
     // TODO: Start a single thread to handle signals
 
@@ -57,22 +45,20 @@ int main(int argc, char * argv[])
         goto end;
     }
 
-    /* Create queues the threadpool will use to mark new connections and connections for removal */
-    err = setup_conn_mgmt_queues(&p_new_conns, &p_del_conns);
+    /* Setup the connection manager that will handle new and closed connections */
+    err = connmgr_init(&conn_mgr, INITIAL_MAX_CONNS);
     if (0 != err)
     {
-        LOG_FATAL("Failed to setup connection management queues");
+        LOG_FATAL("Failed to initialize connection manager");
         goto end;
     }
-
-    /* Create the arrays for polling and for holding more detailed connection contexts */
 
     /* Start the main server listening socket */
     sfd = nl_start_listener("127.0.0.1", "1337");
     if (-1 == sfd)
     {
         LOG_FATAL("Failed to start listening on socket");
-        goto destroy_queues;
+        goto destroy_connmgr;
     }
 
     /* TODO: Add the listening socket to the poll set */
@@ -124,10 +110,8 @@ int main(int argc, char * argv[])
         // TODO: Compact array down for closed connections
     }
 
-destroy_queues:
-    teardown_conn_mgmt_queues(p_new_conns, p_del_conns);
-    p_new_conns = NULL;
-    p_del_conns = NULL;
+destroy_connmgr:
+    (void)connmgr_deinit(&conn_mgr);
 
 end:
     return 0;
@@ -162,133 +146,4 @@ static int setup_signal_handlers(void)
     (void)signal(SIGPIPE, SIG_IGN);
     res = 0;
     return res;
-}
-
-static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue)
-{
-    assert(NULL != pp_queue);
-
-    int                 res     = -1;
-    conn_mgmt_queue_t * p_queue = NULL;
-    ezqueue_t *         p_ezq   = NULL;
-    pthread_mutex_t *   p_mutex = NULL;
-
-    p_queue = (conn_mgmt_queue_t *)malloc(sizeof(conn_mgmt_queue_t));
-    if (NULL == p_queue)
-    {
-        LOG_ERROR("Failed to allocate memory for conn_mgmt_queue_t");
-        goto err;
-    }
-
-    p_ezq = (ezqueue_t *)malloc(sizeof(ezqueue_t));
-    if (NULL == p_ezq)
-    {
-        LOG_ERROR("Failed to allocate memory for ezqueue_t");
-        goto cleanup_queue;
-    }
-
-    res = ezq_init(p_ezq, INITIAL_Q_SIZE);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to initialize ezqueue");
-        goto cleanup_ezq;
-    }
-
-    p_mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
-    if (NULL == p_mutex)
-    {
-        LOG_ERROR("Failed to allocate memory for mutex");
-        goto deinit_ezq;
-    }
-
-    res = pthread_mutex_init(p_mutex, NULL);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to initialize mutex");
-        goto cleanup_mutex;
-    }
-
-    p_queue->p_queue = p_ezq;
-    p_queue->p_mutex = p_mutex;
-    *pp_queue        = p_queue;
-
-    return 0;
-
-cleanup_mutex:
-    free(p_mutex);
-    p_mutex = NULL;
-
-deinit_ezq:
-    (void)ezq_deinit(p_ezq);
-
-cleanup_ezq:
-    free(p_ezq);
-    p_ezq = NULL;
-
-cleanup_queue:
-    free(p_queue);
-    p_queue = NULL;
-
-err:
-    return -1;
-}
-
-static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
-{
-    assert(NULL != p_queue);
-
-    (void)pthread_mutex_destroy(p_queue->p_mutex);
-    free(p_queue->p_queue);
-    p_queue->p_mutex = NULL;
-
-    (void)ezq_deinit(p_queue->p_queue);
-    free(p_queue->p_queue);
-    p_queue->p_queue = NULL;
-
-    free(p_queue);
-}
-
-static int setup_conn_mgmt_queues(conn_mgmt_queue_t ** pp_new_conns, conn_mgmt_queue_t ** pp_del_conns)
-{
-    assert(NULL != pp_new_conns);
-    assert(NULL != pp_del_conns);
-
-    int res = -1;
-
-    conn_mgmt_queue_t * p_new_conn = NULL;
-    conn_mgmt_queue_t * p_del_conn = NULL;
-
-    res = create_mgmt_queue(&p_new_conn);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to create conn_mgmt_queue for new conns");
-        goto err;
-    }
-
-    res = create_mgmt_queue(&p_del_conn);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to create conn_mgmt_queue for closed conns");
-        goto cleanup_new_conn;
-    }
-
-    *pp_new_conns = p_new_conn;
-    *pp_del_conns = p_del_conn;
-    return 0;
-
-cleanup_new_conn:
-    destroy_mgmt_queue(p_new_conn);
-    p_new_conn = NULL;
-
-err:
-    return -1;
-}
-
-static void teardown_conn_mgmt_queues(conn_mgmt_queue_t * p_new_conns, conn_mgmt_queue_t * p_del_conns)
-{
-    assert(NULL != p_new_conns);
-    assert(NULL != p_del_conns);
-
-    destroy_mgmt_queue(p_new_conns);
-    destroy_mgmt_queue(p_del_conns);
 }
