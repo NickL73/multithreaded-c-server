@@ -4,6 +4,7 @@
  * @date 7/11/25
  * @brief
  */
+#include "connmgr.h"
 #include "ezqueue.h"
 #include "netio.h"
 #include "utils.h"
@@ -22,12 +23,6 @@ typedef struct conn_context
     int fd;
     int is_active;
 };
-
-typedef struct conn_mgmt_queue
-{
-    ezqueue_t *       p_queue;
-    pthread_mutex_t * p_mutex;
-} conn_mgmt_queue_t;
 
 /* GLOBAL VARIABLES AND VALUES */
 #define INITIAL_Q_SIZE 16
@@ -100,7 +95,7 @@ int main(int argc, char * argv[])
             if (pfd[conn].revents & POLLIN)
             {
                 LOG_INFO("Received data on connection %d", conn);
-                err = nl_handle_incoming_data(pfd[conn].fd);
+                // err = nl_handle_incoming_data(pfd[conn].fd);
             }
 
             if (pfd[conn].revents & (POLLHUP | POLLERR | POLLNVAL))

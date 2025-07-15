@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #define CONNECTION_BACKLOG 100
+#define LISTENER_IDX       0
 
 int nl_start_listener(char * p_host, char * p_service)
 {
@@ -108,5 +109,32 @@ int nl_set_nonblocking(const int fd)
         res = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
 
+    return res;
+}
+
+int nl_handle_sock_data_in(socket_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
+{
+    int res = -1;
+
+    if ((NULL == p_ctx) || (NULL == p_new_conns))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    if (LISTENER_IDX == p_ctx->idx)
+    {
+        // TODO: Accept Connection
+        // Create socket_ctx_t
+        // Add to new_conns queue
+    }
+
+    else
+    {
+        // TODO: Read and act
+    }
+
+
+end:
     return res;
 }
