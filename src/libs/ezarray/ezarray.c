@@ -23,7 +23,7 @@ int ezarr_init(ezarray_t * p_ezarray, uint16_t max_items)
         goto end;
     }
 
-    pp_buf = malloc(max_items * sizeof(void *));
+    pp_buf = calloc(max_items, sizeof(void *));
     if (NULL == pp_buf)
     {
         LOG_ERROR("Failed to allocate memory");
@@ -131,6 +131,37 @@ int ezarr_get_at(ezarray_t * p_ezarray, uint16_t idx, void ** pp_out)
 
     *pp_out = p_ezarray->pp_buf[idx];
     res     = 0;
+
+end:
+    return res;
+}
+
+int ezarr_compact(ezarray_t * p_ezarray, void * p_sentinel)
+{
+    int      res       = -1;
+    uint16_t write_idx = 0;
+
+    if ((NULL == p_ezarray) || (NULL == p_ezarray->pp_buf) || (0 == p_ezarray->max_items))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    for (uint16_t read_idx = 0; read_idx < p_ezarray->max_items; read_idx++)
+    {
+        if (p_ezarray->pp_buf[read_idx] != p_sentinel)
+        {
+            if (write_idx != read_idx)
+            {
+                p_ezarray->pp_buf[write_idx] = p_ezarray->pp_buf[read_idx];
+                p_ezarray->pp_buf[read_idx]  = p_sentinel;
+            }
+            write_idx++;
+        }
+    }
+
+    p_ezarray->num_items = write_idx;
+    res                  = 0;
 
 end:
     return res;

@@ -10,6 +10,7 @@
 #include "utils.h"
 
 #include <assert.h>
+#include <pthread.h>
 #include <stdlib.h>
 
 
@@ -90,7 +91,76 @@ end:
     return -1;
 }
 
+int connmgr_deinit(conn_mgr_t * p_mgr)
+{
+    int res = -1;
+
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds) || (NULL == p_mgr->p_new_conns))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    destroy_mgmt_queue(p_mgr->p_new_conns);
+    p_mgr->p_new_conns = NULL;
+    free(p_mgr->p_pfds);
+    p_mgr->p_pfds = NULL;
+
+    (void)ezarr_deinit(p_mgr->p_conns);
+    free(p_mgr->p_conns);
+    p_mgr->p_conns = NULL;
+
+    res = 0;
+
+end:
+    return res;
+}
+
+int connmgr_add_new_connections(conn_mgr_t * p_mgr)
+{
+    return -1;
+}
+
+int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
+{
+    int res       = -1;
+    int write_idx = 0;
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    res = ezarr_compact(p_mgr->p_conns, NULL);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to compact ezarray_t");
+        goto end;
+    }
+
+    /* This logic is already contained in ezarray.c, but not generalized enough to use it for struct pollfd */
+    for (int read_idx = 0; read_idx < p_mgr->max_conns; read_idx++)
+    {
+        if (p_mgr->p_pfds[read_idx].fd != -1)
+        {
+            if (write_idx != read_idx)
+            {
+                p_mgr->p_pfds[write_idx]   = p_mgr->p_pfds[read_idx];
+                p_mgr->p_pfds[read_idx].fd = -1;
+            }
+            write_idx++;
+        }
+    }
+
+    p_mgr->num_active_conns = write_idx;
+    res                     = 0;
+
+end:
+    return res;
+}
+
 /* STATIC FUNCTION DEFINITIONS */
+
 
 static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items)
 {
@@ -165,6 +235,10 @@ err:
 static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
 {
     assert(NULL != p_queue);
+
+    (void)pthread_mutex_lock(p_queue->p_mutex);
+    (void)ezq_clear(p_queue->p_queue, free);
+    (void)pthread_mutex_unlock(p_queue->p_mutex);
 
     (void)pthread_mutex_destroy(p_queue->p_mutex);
     free(p_queue->p_queue);

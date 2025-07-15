@@ -21,4 +21,6 @@ int ezarr_push(ezarray_t * p_ezarray, void * p_item);
 
 int ezarr_set_at(ezarray_t * p_ezarray, uint16_t idx, void * p_item);
 int ezarr_get_at(ezarray_t * p_ezarray, uint16_t idx, void ** pp_out);
+
+int ezarr_compact(ezarray_t * p_ezarray, void * p_sentinel);
 #endif // EZARRAY_H
