@@ -18,8 +18,11 @@
 #define CONNECTION_BACKLOG 100
 #define LISTENER_IDX       0
 
+/* STATIC FUNCTION DECLARATIONS */
 static int nl_accept(int fd, conn_mgmt_queue_t * p_new_conns);
+static int nl_read(conn_ctx_t * p_ctx);
 
+/* PUBLIC FUNCTION DEFINITONS */
 int nl_start_listener(char * p_host, char * p_service)
 {
     int fd     = -1;
@@ -129,15 +132,12 @@ int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
 
     if (LISTENER_IDX == p_ctx->idx)
     {
-        // TODO: Accept Connection
-        // Create socket_ctx_t
-        // Add to new_conns queue
-        // Do all of that in a loop until -1 with EAGAIN/EWOULDBLOCK
+        res = nl_accept(p_ctx->fd, p_new_conns);
     }
 
     else
     {
-        // TODO: Read and act
+        res = nl_read(p_ctx);
     }
 
 
@@ -145,7 +145,9 @@ end:
     return res;
 }
 
-static int nl_accept(int fd, conn_mgmt_queue_t * p_new_conns)
+/* STATIC FUNCTION DEFINITIONS */
+
+static int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
 {
     assert(NULL != p_new_conns);
     assert(NULL != p_new_conns->p_queue);
@@ -183,6 +185,13 @@ static int nl_accept(int fd, conn_mgmt_queue_t * p_new_conns)
         memcpy(&(p_ctx->addr), &addr, sizeof(addr));
         memset(&addr, 0, sizeof(addr));
         addrlen = sizeof(addr);
+
+        err = nl_set_nonblocking(p_ctx->fd);
+        if (-1 == err)
+        {
+            LOG_ERROR("Failed to set socket to non-blocking mode");
+            goto cleanup_ctx;
+        }
 
         err = pthread_mutex_lock(p_new_conns->p_mutex);
         if (0 != err)
@@ -225,4 +234,9 @@ cleanup_ctx:
     free(p_ctx);
     p_ctx = NULL;
     return -1;
+}
+
+static int nl_read(conn_ctx_t * p_ctx)
+{
+    return 0;
 }
