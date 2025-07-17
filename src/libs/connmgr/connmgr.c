@@ -138,13 +138,17 @@ end:
     return res;
 }
 
-int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
+int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
+{
+    // Create the conn_ctx_t structure
+    // Queue the structure for adding
+}
 
 int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
 {
     int res = -1;
 
-    if ((NULL == p_mgr) || (NULL == p_mgr->p_new_conns))
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_closed_conns))
     {
         LOG_ERROR("Invalid argument");
         goto end;
