@@ -140,7 +140,20 @@ end:
 
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
 
-int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
+int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
+{
+    int res = -1;
+
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_new_conns))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+
+end:
+    return res;
+}
 
 int connmgr_update_connections(conn_mgr_t * p_mgr)
 {
@@ -178,7 +191,6 @@ static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items)
     int                 res     = -1;
     conn_mgmt_queue_t * p_queue = NULL;
     ezqueue_t *         p_ezq   = NULL;
-    pthread_mutex_t *   p_mutex = NULL;
 
     p_queue = (conn_mgmt_queue_t *)malloc(sizeof(conn_mgmt_queue_t));
     if (NULL == p_queue)
