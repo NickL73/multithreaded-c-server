@@ -61,6 +61,7 @@ int main(int argc, char * argv[])
         goto destroy_connmgr;
     }
 
+
     /* TODO: Add the listening socket to the poll set */
     active_sockets += 1;
 
@@ -107,7 +108,13 @@ int main(int argc, char * argv[])
             }
         }
 
-        // TODO: Compact array down for closed connections
+
+        err = connmgr_update_connections(&conn_mgr);
+        if (0 != err)
+        {
+            LOG_FATAL("Failed to update connections");
+            break;
+        }
     }
 
 destroy_connmgr:

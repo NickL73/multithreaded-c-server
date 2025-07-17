@@ -13,10 +13,10 @@
 #include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
-#include <stdbool.h>
 
 typedef struct conn_ctx
 {
+    pthread_mutex_t         mutex;
     int                     idx;
     int                     fd;
     struct sockaddr_storage addr;
@@ -24,8 +24,8 @@ typedef struct conn_ctx
 
 typedef struct conn_mgmt_queue
 {
-    ezqueue_t *       p_queue;
-    pthread_mutex_t * p_mutex;
+    ezqueue_t *     p_queue;
+    pthread_mutex_t mutex;
 } conn_mgmt_queue_t;
 
 typedef struct conn_mgr
@@ -33,6 +33,7 @@ typedef struct conn_mgr
     ezarray_t *         p_conns;
     struct pollfd *     p_pfds;
     conn_mgmt_queue_t * p_new_conns;
+    conn_mgmt_queue_t * p_closed_conns;
     uint16_t            max_conns;
     uint16_t            num_active_conns;
 } conn_mgr_t;
@@ -40,7 +41,10 @@ typedef struct conn_mgr
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns);
 int connmgr_deinit(conn_mgr_t * p_mgr);
 
-int connmgr_add_new_connections(conn_mgr_t * p_mgr);
-int connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
+int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
+int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
+
+int connmgr_update_connections(conn_mgr_t * p_mgr);
+
 
 #endif // CONN_MGMT_H

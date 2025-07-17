@@ -17,14 +17,17 @@
 static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items);
 static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
 static int  add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
+static int  connmgr_add_new_connections(conn_mgr_t * p_mgr);
+static int  connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 {
     int err = -1;
 
-    ezarray_t *         p_conns     = NULL;
-    struct pollfd *     p_pfds      = NULL;
-    conn_mgmt_queue_t * p_new_conns = NULL;
+    ezarray_t *         p_conns        = NULL;
+    struct pollfd *     p_pfds         = NULL;
+    conn_mgmt_queue_t * p_new_conns    = NULL;
+    conn_mgmt_queue_t * p_closed_conns = NULL;
 
     if ((NULL == p_mgr) || (0 == initial_max_conns))
     {
@@ -62,6 +65,13 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
         goto cleanup_pfds;
     }
 
+    err = create_mgmt_queue(&p_closed_conns, initial_max_conns);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to create conn_mgmt_queue for closed conns");
+        goto cleanup_add_queue;
+    }
+
     p_mgr->p_conns = p_conns;
     p_conns        = NULL;
 
@@ -71,10 +81,18 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
     p_mgr->p_new_conns = p_new_conns;
     p_new_conns        = NULL;
 
+    p_mgr->p_closed_conns = p_closed_conns;
+    p_closed_conns        = NULL;
+
     p_mgr->max_conns        = initial_max_conns;
     p_mgr->num_active_conns = 0;
 
     return 0;
+
+cleanup_add_queue:
+    (void)destroy_mgmt_queue(p_new_conns);
+    free(p_pfds);
+    p_pfds = NULL;
 
 cleanup_pfds:
     free(p_pfds);
@@ -95,14 +113,18 @@ int connmgr_deinit(conn_mgr_t * p_mgr)
 {
     int res = -1;
 
-    if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds) || (NULL == p_mgr->p_new_conns))
+    if (NULL == p_mgr)
     {
         LOG_ERROR("Invalid argument");
         goto end;
     }
 
+    destroy_mgmt_queue(p_mgr->p_closed_conns);
+    p_mgr->p_closed_conns = NULL;
+
     destroy_mgmt_queue(p_mgr->p_new_conns);
     p_mgr->p_new_conns = NULL;
+
     free(p_mgr->p_pfds);
     p_mgr->p_pfds = NULL;
 
@@ -116,102 +138,30 @@ end:
     return res;
 }
 
-int connmgr_add_new_connections(conn_mgr_t * p_mgr)
-{
-    int         res           = -1;
-    ezqueue_t * p_new_conns_q = NULL;
-    void *      p_new_conn    = NULL;
+int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
 
-    if ((NULL == p_mgr) || (NULL == p_mgr->p_new_conns) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
+int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
+
+int connmgr_update_connections(conn_mgr_t * p_mgr)
+{
+    int res = -1;
+    if (NULL == p_mgr)
     {
         LOG_ERROR("Invalid argument");
         goto end;
     }
 
-    p_new_conns_q = p_mgr->p_new_conns->p_queue;
-
-    /* TODO: Consider whether I'm holding the lock too long. Is it more efficient to lock/unlock repeatedly or block? */
-    res = pthread_mutex_lock(p_mgr->p_new_conns->p_mutex);
+    res = connmgr_remove_closed_connections(p_mgr);
     if (0 != res)
     {
-        LOG_ERROR("Failed to lock mutex");
+        LOG_ERROR("Failed to remove closed connections");
         goto end;
     }
 
-    while (0 != p_new_conns_q->num_items)
+    res = connmgr_add_new_connections(p_mgr);
     {
-        res = ezq_dequeue(p_new_conns_q, &p_new_conn);
-        if (0 != res)
-        {
-            LOG_ERROR("Failed to dequeue from conn_mgmt_queue");
-            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
-            goto end;
-        }
-
-        res = ezarr_push(p_mgr->p_conns, p_new_conn);
-        if (0 != res)
-        {
-            LOG_ERROR("Failed to push to ezarray_t");
-            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
-            goto end;
-        }
-
-        res = add_to_pollfd(((conn_ctx_t *)p_new_conn)->fd, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
-        if (0 != res)
-        {
-            LOG_ERROR("Failed to add to poll array");
-            (void)pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
-        }
-
-        /* The array may have resized, so we should just update the connmgr to reflect, just in case */
-        p_mgr->max_conns = p_mgr->p_conns->max_items;
-        p_mgr->num_active_conns++;
+        LOG_ERROR("Failed to add new connections");
     }
-
-    res = pthread_mutex_unlock(p_mgr->p_new_conns->p_mutex);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to unlock mutex");
-        // Fallthrough to return regardless
-    }
-
-end:
-    return res;
-}
-
-int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
-{
-    int res       = -1;
-    int write_idx = 0;
-    if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
-    {
-        LOG_ERROR("Invalid argument");
-        goto end;
-    }
-
-    res = ezarr_compact(p_mgr->p_conns, NULL);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to compact ezarray_t");
-        goto end;
-    }
-
-    /* This logic is already contained in ezarray.c, but not generalized enough to use it for struct pollfd */
-    for (int read_idx = 0; read_idx < p_mgr->max_conns; read_idx++)
-    {
-        if (p_mgr->p_pfds[read_idx].fd != -1)
-        {
-            if (write_idx != read_idx)
-            {
-                p_mgr->p_pfds[write_idx]   = p_mgr->p_pfds[read_idx];
-                p_mgr->p_pfds[read_idx].fd = -1;
-            }
-            write_idx++;
-        }
-    }
-
-    p_mgr->num_active_conns = write_idx;
-    res                     = 0;
 
 end:
     return res;
@@ -251,29 +201,17 @@ static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items)
         goto cleanup_ezq;
     }
 
-    p_mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
-    if (NULL == p_mutex)
-    {
-        LOG_ERROR("Failed to allocate memory for mutex");
-        goto deinit_ezq;
-    }
-
-    res = pthread_mutex_init(p_mutex, NULL);
+    res = pthread_mutex_init(&(p_queue->mutex), NULL);
     if (0 != res)
     {
         LOG_ERROR("Failed to initialize mutex");
-        goto cleanup_mutex;
+        goto deinit_ezq;
     }
 
     p_queue->p_queue = p_ezq;
-    p_queue->p_mutex = p_mutex;
     *pp_queue        = p_queue;
 
     return 0;
-
-cleanup_mutex:
-    free(p_mutex);
-    p_mutex = NULL;
 
 deinit_ezq:
     (void)ezq_deinit(p_ezq);
@@ -294,19 +232,117 @@ static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
 {
     assert(NULL != p_queue);
 
-    (void)pthread_mutex_lock(p_queue->p_mutex);
+    (void)pthread_mutex_lock(&(p_queue->mutex));
     (void)ezq_clear(p_queue->p_queue, free);
-    (void)pthread_mutex_unlock(p_queue->p_mutex);
+    (void)pthread_mutex_unlock(&(p_queue->mutex));
 
-    (void)pthread_mutex_destroy(p_queue->p_mutex);
-    free(p_queue->p_queue);
-    p_queue->p_mutex = NULL;
+    (void)pthread_mutex_destroy(&(p_queue->mutex));
 
     (void)ezq_deinit(p_queue->p_queue);
     free(p_queue->p_queue);
     p_queue->p_queue = NULL;
 
     free(p_queue);
+}
+
+static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
+{
+    int         res           = -1;
+    ezqueue_t * p_new_conns_q = NULL;
+    void *      p_new_conn    = NULL;
+
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_new_conns) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    p_new_conns_q = p_mgr->p_new_conns->p_queue;
+
+    res = pthread_mutex_lock((&p_mgr->p_new_conns->mutex));
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to lock mutex");
+        goto end;
+    }
+
+    while (0 != p_new_conns_q->num_items)
+    {
+        res = ezq_dequeue(p_new_conns_q, &p_new_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to dequeue from conn_mgmt_queue");
+            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
+            goto end;
+        }
+
+        res = ezarr_push(p_mgr->p_conns, p_new_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to push to ezarray_t");
+            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
+            goto end;
+        }
+
+        res = add_to_pollfd(((conn_ctx_t *)p_new_conn)->fd, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to add to poll array");
+            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
+        }
+
+        /* The array may have resized, so we should just update the connmgr to reflect, just in case */
+        p_mgr->max_conns = p_mgr->p_conns->max_items;
+        p_mgr->num_active_conns++;
+    }
+
+    res = pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to unlock mutex");
+        // Fallthrough to return regardless
+    }
+
+end:
+    return res;
+}
+
+static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
+{
+    int res       = -1;
+    int write_idx = 0;
+    if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    res = ezarr_compact(p_mgr->p_conns, NULL);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to compact ezarray_t");
+        goto end;
+    }
+
+    /* This logic is already contained in ezarray.c, but not generalized enough to use it for struct pollfd */
+    for (int read_idx = 0; read_idx < p_mgr->max_conns; read_idx++)
+    {
+        if (p_mgr->p_pfds[read_idx].fd != -1)
+        {
+            if (write_idx != read_idx)
+            {
+                p_mgr->p_pfds[write_idx]   = p_mgr->p_pfds[read_idx];
+                p_mgr->p_pfds[read_idx].fd = -1;
+            }
+            write_idx++;
+        }
+    }
+
+    p_mgr->num_active_conns = write_idx;
+    res                     = 0;
+
+end:
+    return res;
 }
 
 static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size)
