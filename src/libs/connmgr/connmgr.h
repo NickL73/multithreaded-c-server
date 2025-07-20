@@ -13,11 +13,14 @@
 #include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdbool.h>
 
 typedef struct conn_ctx
 {
     pthread_mutex_t         mutex;
-    int                     idx;
+    int                     ref_count;
+    bool                    b_marked_for_deletion;
+    uint16_t                idx;
     int                     fd;
     struct sockaddr_storage addr;
 } conn_ctx_t;
@@ -42,7 +45,11 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns);
 int connmgr_deinit(conn_mgr_t * p_mgr);
 
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
-int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
+
+int connmgr_check_active_connection(conn_ctx_t * p_ctx);
+int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
+
+int connmgr_mark_for_deletion(conn_ctx_t * p_conn);
 
 int connmgr_update_connections(conn_mgr_t * p_mgr);
 

@@ -28,10 +28,8 @@ static int  setup_signal_handlers(void);
 
 int main(int argc, char * argv[])
 {
-    int           err            = 0;
-    int           sfd            = -1;
-    int           active_sockets = 0;
-    struct pollfd pfd[10]        = {0};
+    int err = 0;
+    int sfd = -1;
 
     conn_mgr_t conn_mgr = {0};
 
@@ -63,7 +61,6 @@ int main(int argc, char * argv[])
 
 
     /* TODO: Add the listening socket to the poll set */
-    active_sockets += 1;
 
     /* TODO: Create conn_ctx_t for listener */
     /* TODO: Add conn_ctx_t for listener to new connections queue */
@@ -71,7 +68,7 @@ int main(int argc, char * argv[])
 
     while (!g_should_shutdown)
     {
-        err = poll(pfd, active_sockets, -1);
+        err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1);
         if (-1 == err)
         {
             LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
@@ -83,31 +80,58 @@ int main(int argc, char * argv[])
             break;
         }
 
-        for (int conn = 0; conn < active_sockets; conn++)
+        for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
         {
-            if (pfd[conn].revents & POLLIN)
+            /* Check if the connection has been marked for deletion before tasking anything to the threadpool */
+            err = connmgr_check_active_connection((conn_ctx_t *)(conn_mgr.p_conns->pp_buf[conn]));
+
+            if (-1 == err)
+            {
+                LOG_FATAL("Failed to check active connection");
+                goto destroy_connmgr;
+            }
+
+            /* Client connection is no longer active, if no more references free resources and set sentinel values  */
+            if (0 == err)
+            {
+                err = connmgr_attempt_deletion(&conn_mgr, conn);
+                if (-1 == err)
+                {
+                    LOG_FATAL("Failed to attempt deletion");
+                    goto destroy_connmgr;
+                }
+
+                /* Nothing else to do for a connection pending deletion so move on */
+                continue;
+            }
+
+            if (conn_mgr.p_pfds[conn].revents & POLLIN)
             {
                 LOG_INFO("Received data on connection %d", conn);
                 // TODO: Check if we're at the maximum number of connections (this is really impractical)
                 if (0 == conn)
                 {
-                    err = nl_accept(pfd[conn].fd, p_new_conns);
+                    err = nl_accept(conn_mgr.p_pfds[conn].fd, conn_mgr.p_new_conns);
+                }
+
+                else
+                {
+                    err = nl_handle_sock_data_in((conn_ctx_t *)(&(conn_mgr.p_conns[conn])));
                 }
             }
 
-            if (pfd[conn].revents & (POLLHUP | POLLERR | POLLNVAL))
+            if (conn_mgr.p_pfds[conn].revents & (POLLHUP | POLLERR | POLLNVAL))
             {
                 LOG_INFO("Connection %d closed", conn);
-                // TODO: Mark as ready for removal and close the socket
+                err = connmgr_mark_for_deletion((conn_ctx_t *)(&conn_mgr.p_conns[conn]));
             }
 
-            if (pfd[conn].revents & POLLOUT)
+            if (conn_mgr.p_pfds[conn].revents & POLLOUT)
             {
                 LOG_INFO("Connection %d is ready for writing", conn);
-                // TODO: Send the data
+                err = nl_handle_sock_data_out((conn_ctx_t *)(&(conn_mgr.p_conns[conn])));
             }
         }
-
 
         err = connmgr_update_connections(&conn_mgr);
         if (0 != err)

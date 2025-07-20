@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 
 static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items);
@@ -19,6 +20,7 @@ static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
 static int  add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
 static int  connmgr_add_new_connections(conn_mgr_t * p_mgr);
 static int  connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
+static int  check_ctx_ref_count(conn_ctx_t * p_conn);
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 {
@@ -144,15 +146,38 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
     // Queue the structure for adding
 }
 
-int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
+int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, conn_ctx_t * p_conn)
 {
     int res = -1;
+    int err = -1;
 
-    if ((NULL == p_mgr) || (NULL == p_mgr->p_closed_conns))
+    if ((NULL == p_mgr) || (NULL == p_conn))
     {
         LOG_ERROR("Invalid argument");
         goto end;
     }
+
+    err = pthread_mutex_lock(&p_conn->mutex);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to lock mutex");
+        goto end;
+    }
+
+    /* Close the fd so that no more I/O can occur */
+    close(p_conn->fd);
+    p_conn->fd = -1;
+
+    /* Mark it for deletion */
+    p_conn->b_marked_for_deletion = true;
+
+    err = pthread_mutex_unlock(&p_conn->mutex);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to unlock mutex. Continuing.");
+    }
+
+    /**/
 
 
 end:
@@ -410,4 +435,26 @@ static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint
 
 end:
     return res;
+}
+
+static int check_ctx_ref_count(conn_ctx_t * p_conn)
+{
+    assert(NULL != p_conn);
+    int res      = -1;
+    int num_refs = 0;
+    res          = pthread_mutex_lock(&(p_conn->mutex));
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to lock mutex");
+    }
+
+    num_refs = p_conn->ref_count;
+
+    res = pthread_mutex_unlock(&(p_conn->mutex));
+    if (0 == res)
+    {
+        res = num_refs;
+    }
+
+    return num_refs;
 }
