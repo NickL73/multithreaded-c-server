@@ -29,6 +29,7 @@ static int  setup_signal_handlers(void);
 int main(int argc, char * argv[])
 {
     int err = 0;
+    int res = -1;
     int sfd = -1;
 
     conn_mgr_t conn_mgr = {0};
@@ -62,11 +63,20 @@ int main(int argc, char * argv[])
         goto destroy_connmgr;
     }
 
+    err = connmgr_create_new_conn(sfd, &conn_mgr);
+    if (0 != err)
+    {
+        LOG_FATAL("Failed to create connection structure for listener.");
+        goto cleanup_connections;
+    }
 
-    /* TODO: Add the listening socket to the poll set */
-    /* TODO: Create conn_ctx_t for listener */
-    /* TODO: Add conn_ctx_t for listener to new connections queue */
-    /* TODO: connmgr_add_new */
+    err = connmgr_update_connections(&conn_mgr);
+    if (0 != err)
+    {
+        LOG_FATAL("Failed to update connection manager for listener.");
+        // TODO: Is this the right action? I'm not sure yet.
+        goto cleanup_connections;
+    }
 
     while (!g_should_shutdown)
     {
@@ -113,9 +123,14 @@ int main(int argc, char * argv[])
             {
                 LOG_INFO("Received data on connection %d", conn);
                 // TODO: Check if we're at the maximum number of connections (this is really impractical)
-                if (0 == conn)
+                if (sfd == conn_mgr.p_pfds[conn].fd)
                 {
                     err = nl_accept(conn_mgr.p_pfds[conn].fd, conn_mgr.p_new_conns);
+                    if (-1 == err)
+                    {
+                        LOG_ERROR("Failed to accept new connections");
+                        goto destroy_connmgr;
+                    }
                 }
 
                 else
@@ -159,11 +174,17 @@ int main(int argc, char * argv[])
         }
     }
 
+    /* Exiting cleanly from the loop */
+    res = 0;
+
+cleanup_connections:
+    // TODO: Close everything tracked by conn mgr
+
 destroy_connmgr:
     (void)connmgr_deinit(&conn_mgr);
 
 end:
-    return 0;
+    return res;
 }
 
 /* STATIC FUNCTION DEFINITIONS */
