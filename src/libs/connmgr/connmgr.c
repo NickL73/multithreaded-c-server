@@ -20,16 +20,14 @@ static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
 static int  add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
 static int  connmgr_add_new_connections(conn_mgr_t * p_mgr);
 static int  connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
-static int  check_ctx_ref_count(conn_ctx_t * p_conn);
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 {
     int err = -1;
 
-    ezarray_t *         p_conns        = NULL;
-    struct pollfd *     p_pfds         = NULL;
-    conn_mgmt_queue_t * p_new_conns    = NULL;
-    conn_mgmt_queue_t * p_closed_conns = NULL;
+    ezarray_t *         p_conns     = NULL;
+    struct pollfd *     p_pfds      = NULL;
+    conn_mgmt_queue_t * p_new_conns = NULL;
 
     if ((NULL == p_mgr) || (0 == initial_max_conns))
     {
@@ -67,13 +65,6 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
         goto cleanup_pfds;
     }
 
-    err = create_mgmt_queue(&p_closed_conns, initial_max_conns);
-    if (0 != err)
-    {
-        LOG_ERROR("Failed to create conn_mgmt_queue for closed conns");
-        goto cleanup_add_queue;
-    }
-
     p_mgr->p_conns = p_conns;
     p_conns        = NULL;
 
@@ -83,18 +74,10 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
     p_mgr->p_new_conns = p_new_conns;
     p_new_conns        = NULL;
 
-    p_mgr->p_closed_conns = p_closed_conns;
-    p_closed_conns        = NULL;
-
     p_mgr->max_conns        = initial_max_conns;
     p_mgr->num_active_conns = 0;
 
     return 0;
-
-cleanup_add_queue:
-    (void)destroy_mgmt_queue(p_new_conns);
-    free(p_pfds);
-    p_pfds = NULL;
 
 cleanup_pfds:
     free(p_pfds);
@@ -121,9 +104,6 @@ int connmgr_deinit(conn_mgr_t * p_mgr)
         goto end;
     }
 
-    destroy_mgmt_queue(p_mgr->p_closed_conns);
-    p_mgr->p_closed_conns = NULL;
-
     destroy_mgmt_queue(p_mgr->p_new_conns);
     p_mgr->p_new_conns = NULL;
 
@@ -146,39 +126,92 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
     // Queue the structure for adding
 }
 
-int connmgr_mark_for_deletion(conn_mgr_t * p_mgr, conn_ctx_t * p_conn)
+int connmgr_check_active_connection(conn_ctx_t * p_ctx)
 {
-    int res = -1;
-    int err = -1;
-
-    if ((NULL == p_mgr) || (NULL == p_conn))
+    int  res      = -1;
+    bool b_marked = false;
+    if (NULL == p_ctx)
     {
         LOG_ERROR("Invalid argument");
         goto end;
     }
 
-    err = pthread_mutex_lock(&p_conn->mutex);
-    if (0 != err)
+    res = pthread_mutex_lock(&(p_ctx->mutex));
+    if (0 != res)
     {
         LOG_ERROR("Failed to lock mutex");
         goto end;
     }
 
-    /* Close the fd so that no more I/O can occur */
-    close(p_conn->fd);
-    p_conn->fd = -1;
+    b_marked = p_ctx->b_marked_for_deletion;
 
-    /* Mark it for deletion */
-    p_conn->b_marked_for_deletion = true;
-
-    err = pthread_mutex_unlock(&p_conn->mutex);
-    if (0 != err)
+    res = pthread_mutex_unlock(&(p_ctx->mutex));
+    if (0 == res)
     {
-        LOG_ERROR("Failed to unlock mutex. Continuing.");
+        /* Basically inverting the boolean so this function returns > 0 if it is NOT marked for deletion */
+        res = b_marked ? 0 : 1;
     }
 
-    /**/
+end:
+    return res;
+}
 
+int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
+{
+    int res       = -1;
+    int ref_count = 0;
+
+    if (NULL == p_mgr)
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    conn_ctx_t * p_conn = (conn_ctx_t *)(p_mgr->p_conns->pp_buf[conn_idx]);
+
+    res = pthread_mutex_lock(&p_conn->mutex);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to lock mutex");
+        goto end;
+    }
+
+    if (!(p_conn->b_marked_for_deletion))
+    {
+        LOG_ERROR("Connection is not marked for deletion! This should be treated as fatal. Logic is broken.");
+        (void)pthread_mutex_unlock(&p_conn->mutex);
+        res = -1;
+        goto end;
+    }
+
+    ref_count = p_conn->ref_count;
+
+    res = pthread_mutex_unlock(&p_conn->mutex);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to unlock mutex");
+        goto end;
+    }
+
+    if (0 < p_conn->ref_count)
+    {
+        LOG_INFO("Task pool still has references to this client. Will try to delete again later.");
+    }
+
+    else
+    {
+        LOG_INFO("Connection is not referenced by any task in pool. Deleting.");
+        close(p_conn->fd);
+        p_conn->fd = -1;
+        // TODO: Update to empty or free anything else the client gets in its struct
+
+        (void)pthread_mutex_destroy(&p_conn->mutex);
+        free(p_conn);
+
+        /* Remove connection from the conn_mgr arrays by setting sentinel values to get cleaned up */
+        p_mgr->p_conns->pp_buf[conn_idx] = NULL;
+        p_mgr->p_pfds[conn_idx].fd       = -1;
+    }
 
 end:
     return res;
@@ -217,9 +250,8 @@ static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items)
     assert(NULL != pp_queue);
     assert(0 < max_items);
 
-    int                 res     = -1;
-    conn_mgmt_queue_t * p_queue = NULL;
-    ezqueue_t *         p_ezq   = NULL;
+    int         res   = -1;
+    ezqueue_t * p_ezq = NULL;
 
     p_queue = (conn_mgmt_queue_t *)malloc(sizeof(conn_mgmt_queue_t));
     if (NULL == p_queue)
@@ -435,26 +467,4 @@ static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint
 
 end:
     return res;
-}
-
-static int check_ctx_ref_count(conn_ctx_t * p_conn)
-{
-    assert(NULL != p_conn);
-    int res      = -1;
-    int num_refs = 0;
-    res          = pthread_mutex_lock(&(p_conn->mutex));
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to lock mutex");
-    }
-
-    num_refs = p_conn->ref_count;
-
-    res = pthread_mutex_unlock(&(p_conn->mutex));
-    if (0 == res)
-    {
-        res = num_refs;
-    }
-
-    return num_refs;
 }

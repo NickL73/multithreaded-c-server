@@ -112,7 +112,6 @@ int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
 {
     assert(NULL != p_new_conns);
     assert(NULL != p_new_conns->p_queue);
-    assert(NULL != p_new_conns->p_mutex);
 
     int                     clifd   = -1;
     int                     err     = -1;

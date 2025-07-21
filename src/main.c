@@ -36,6 +36,7 @@ int main(int argc, char * argv[])
     // TODO: Start a single thread to handle signals
 
     /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM and ignore SIGPIPE */
+    LOG_INFO("Setting up signal handlers.");
     err = setup_signal_handlers();
     if (0 != err)
     {
@@ -44,6 +45,7 @@ int main(int argc, char * argv[])
     }
 
     /* Setup the connection manager that will handle new and closed connections */
+    LOG_INFO("Setting up connection manager.");
     err = connmgr_init(&conn_mgr, INITIAL_MAX_CONNS);
     if (0 != err)
     {
@@ -52,6 +54,7 @@ int main(int argc, char * argv[])
     }
 
     /* Start the main server listening socket */
+    LOG_INFO("Starting listening socket.");
     sfd = nl_start_listener("127.0.0.1", "1337");
     if (-1 == sfd)
     {
@@ -61,13 +64,13 @@ int main(int argc, char * argv[])
 
 
     /* TODO: Add the listening socket to the poll set */
-
     /* TODO: Create conn_ctx_t for listener */
     /* TODO: Add conn_ctx_t for listener to new connections queue */
     /* TODO: connmgr_add_new */
 
     while (!g_should_shutdown)
     {
+        LOG_INFO("Polling connections for activity.");
         err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1);
         if (-1 == err)
         {
@@ -83,8 +86,8 @@ int main(int argc, char * argv[])
         for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
         {
             /* Check if the connection has been marked for deletion before tasking anything to the threadpool */
+            LOG_INFO("Checking status of connection.");
             err = connmgr_check_active_connection((conn_ctx_t *)(conn_mgr.p_conns->pp_buf[conn]));
-
             if (-1 == err)
             {
                 LOG_FATAL("Failed to check active connection");
@@ -94,6 +97,7 @@ int main(int argc, char * argv[])
             /* Client connection is no longer active, if no more references free resources and set sentinel values  */
             if (0 == err)
             {
+                LOG_INFO("Connection no longer active. Will attempt to remove.");
                 err = connmgr_attempt_deletion(&conn_mgr, conn);
                 if (-1 == err)
                 {
@@ -116,14 +120,28 @@ int main(int argc, char * argv[])
 
                 else
                 {
-                    err = nl_handle_sock_data_in((conn_ctx_t *)(&(conn_mgr.p_conns[conn])));
+                    err = nl_handle_sock_data_in((conn_ctx_t *)(&(conn_mgr.p_conns->pp_buf[conn])));
                 }
             }
 
             if (conn_mgr.p_pfds[conn].revents & (POLLHUP | POLLERR | POLLNVAL))
             {
-                LOG_INFO("Connection %d closed", conn);
-                err = connmgr_mark_for_deletion((conn_ctx_t *)(&conn_mgr.p_conns[conn]));
+                LOG_INFO("Connection on fd %d closed. Marking for deletion.", conn_mgr.p_pfds[conn].fd);
+                err = pthread_mutex_lock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
+                if (0 != err)
+                {
+                    LOG_FATAL("Failed to lock mutex on dead connection.");
+                    goto destroy_connmgr;
+                }
+
+                ((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->b_marked_for_deletion = true;
+
+                err = pthread_mutex_unlock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
+                if (0 != err)
+                {
+                    LOG_FATAL("Failed to unlock mutex on dead connection.");
+                    goto destroy_connmgr;
+                }
             }
 
             if (conn_mgr.p_pfds[conn].revents & POLLOUT)
