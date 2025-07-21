@@ -14,20 +14,17 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-
-static int  create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items);
-static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue);
-static int  add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
-static int  connmgr_add_new_connections(conn_mgr_t * p_mgr);
-static int  connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
+static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
+static int connmgr_add_new_connections(conn_mgr_t * p_mgr);
+static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 {
     int err = -1;
 
-    ezarray_t *         p_conns     = NULL;
-    struct pollfd *     p_pfds      = NULL;
-    conn_mgmt_queue_t * p_new_conns = NULL;
+    ezarray_t *     p_conns     = NULL;
+    struct pollfd * p_pfds      = NULL;
+    ezqueue_t *     p_new_conns = NULL;
 
     if ((NULL == p_mgr) || (0 == initial_max_conns))
     {
@@ -58,11 +55,18 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
 
     memset(p_pfds, 0, sizeof(struct pollfd) * initial_max_conns);
 
-    err = create_mgmt_queue(&p_new_conns, initial_max_conns);
+    p_new_conns = malloc(sizeof(ezqueue_t));
+    if (NULL == p_new_conns)
+    {
+        LOG_ERROR("Failed to allocate memory for ezqueue_t");
+        goto cleanup_pfds;
+    }
+
+    err = ezq_init(p_new_conns, initial_max_conns);
     if (0 != err)
     {
-        LOG_ERROR("Failed to create conn_mgmt_queue for new conns");
-        goto cleanup_pfds;
+        LOG_ERROR("Failed to initialize ezqueue_t");
+        goto destroy_queue;
     }
 
     p_mgr->p_conns = p_conns;
@@ -78,6 +82,10 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns)
     p_mgr->num_active_conns = 0;
 
     return 0;
+
+destroy_queue:
+    free(p_new_conns);
+    p_new_conns = NULL;
 
 cleanup_pfds:
     free(p_pfds);
@@ -104,7 +112,8 @@ int connmgr_deinit(conn_mgr_t * p_mgr)
         goto end;
     }
 
-    destroy_mgmt_queue(p_mgr->p_new_conns);
+    (void)ezq_deinit(p_mgr->p_new_conns);
+    free(p_mgr->p_new_conns);
     p_mgr->p_new_conns = NULL;
 
     free(p_mgr->p_pfds);
@@ -244,80 +253,6 @@ end:
 
 /* STATIC FUNCTION DEFINITIONS */
 
-
-static int create_mgmt_queue(conn_mgmt_queue_t ** pp_queue, uint16_t max_items)
-{
-    assert(NULL != pp_queue);
-    assert(0 < max_items);
-
-    int         res   = -1;
-    ezqueue_t * p_ezq = NULL;
-
-    p_queue = (conn_mgmt_queue_t *)malloc(sizeof(conn_mgmt_queue_t));
-    if (NULL == p_queue)
-    {
-        LOG_ERROR("Failed to allocate memory for conn_mgmt_queue_t");
-        goto err;
-    }
-
-    p_ezq = (ezqueue_t *)malloc(sizeof(ezqueue_t));
-    if (NULL == p_ezq)
-    {
-        LOG_ERROR("Failed to allocate memory for ezqueue_t");
-        goto cleanup_queue;
-    }
-
-    res = ezq_init(p_ezq, max_items);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to initialize ezqueue");
-        goto cleanup_ezq;
-    }
-
-    res = pthread_mutex_init(&(p_queue->mutex), NULL);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to initialize mutex");
-        goto deinit_ezq;
-    }
-
-    p_queue->p_queue = p_ezq;
-    *pp_queue        = p_queue;
-
-    return 0;
-
-deinit_ezq:
-    (void)ezq_deinit(p_ezq);
-
-cleanup_ezq:
-    free(p_ezq);
-    p_ezq = NULL;
-
-cleanup_queue:
-    free(p_queue);
-    p_queue = NULL;
-
-err:
-    return -1;
-}
-
-static void destroy_mgmt_queue(conn_mgmt_queue_t * p_queue)
-{
-    assert(NULL != p_queue);
-
-    (void)pthread_mutex_lock(&(p_queue->mutex));
-    (void)ezq_clear(p_queue->p_queue, free);
-    (void)pthread_mutex_unlock(&(p_queue->mutex));
-
-    (void)pthread_mutex_destroy(&(p_queue->mutex));
-
-    (void)ezq_deinit(p_queue->p_queue);
-    free(p_queue->p_queue);
-    p_queue->p_queue = NULL;
-
-    free(p_queue);
-}
-
 static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
 {
     int         res           = -1;
@@ -330,14 +265,7 @@ static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
         goto end;
     }
 
-    p_new_conns_q = p_mgr->p_new_conns->p_queue;
-
-    res = pthread_mutex_lock((&p_mgr->p_new_conns->mutex));
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to lock mutex");
-        goto end;
-    }
+    p_new_conns_q = p_mgr->p_new_conns;
 
     while (0 != p_new_conns_q->num_items)
     {
@@ -345,35 +273,26 @@ static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
         if (0 != res)
         {
             LOG_ERROR("Failed to dequeue from conn_mgmt_queue");
-            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
-            goto end;
+            break;
         }
 
         res = ezarr_push(p_mgr->p_conns, p_new_conn);
         if (0 != res)
         {
             LOG_ERROR("Failed to push to ezarray_t");
-            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
-            goto end;
+            break;
         }
 
         res = add_to_pollfd(((conn_ctx_t *)p_new_conn)->fd, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
         if (0 != res)
         {
             LOG_ERROR("Failed to add to poll array");
-            (void)pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
+            break;
         }
 
         /* The array may have resized, so we should just update the connmgr to reflect, just in case */
         p_mgr->max_conns = p_mgr->p_conns->max_items;
         p_mgr->num_active_conns++;
-    }
-
-    res = pthread_mutex_unlock(&(p_mgr->p_new_conns->mutex));
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to unlock mutex");
-        // Fallthrough to return regardless
     }
 
 end:
