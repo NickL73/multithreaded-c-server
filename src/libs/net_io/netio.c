@@ -108,10 +108,9 @@ end:
     return fd;
 }
 
-int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
+int nl_accept(const int fd, ezqueue_t * p_new_conns)
 {
     assert(NULL != p_new_conns);
-    assert(NULL != p_new_conns->p_queue);
 
     int                     clifd   = -1;
     int                     err     = -1;
@@ -140,8 +139,6 @@ int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
         p_ctx->fd = clifd;
         clifd     = -1;
 
-        p_ctx->idx = -1;
-
         memcpy(&(p_ctx->addr), &addr, sizeof(addr));
         memset(&addr, 0, sizeof(addr));
         addrlen = sizeof(addr);
@@ -153,26 +150,11 @@ int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns)
             goto cleanup_ctx;
         }
 
-        err = pthread_mutex_lock(p_new_conns->p_mutex);
-        if (0 != err)
-        {
-            LOG_ERROR("Failed to lock mutex");
-            goto cleanup_ctx;
-        }
-
-        err = ezq_enqueue(p_new_conns->p_queue, p_ctx);
+        err = ezq_enqueue(p_new_conns, p_ctx);
         if (0 != err)
         {
             LOG_ERROR("Failed to enqueue new connection");
-            (void)pthread_mutex_unlock(p_new_conns->p_mutex);
             goto cleanup_ctx;
-        }
-
-        err = pthread_mutex_unlock(p_new_conns->p_mutex);
-        if (0 != err)
-        {
-            LOG_ERROR("Failed to unlock mutex");
-            goto end; // No real remediation I can do here. No sense in cleaning up the p_ctx - it's already on the Q
         }
 
         LOG_INFO("Accepted new connection on fd %d.", p_ctx->fd);
