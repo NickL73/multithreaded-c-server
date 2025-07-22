@@ -10,7 +10,7 @@
 
 int nl_start_listener(char * p_host, char * p_service);
 
-int nl_accept(const int fd, ezqueue_t * p_new_conns);
+int nl_accept(const int fd, conn_mgr_t * p_mgr);
 
 int nl_set_nonblocking(const int fd);
 

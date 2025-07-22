@@ -140,6 +140,7 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
         goto end;
     }
 
+    LOG_INFO("Creating new connection context.");
     p_conn = malloc(sizeof(conn_ctx_t));
     if (NULL == p_conn)
     {
@@ -286,7 +287,7 @@ int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
     {
         LOG_INFO("Connection is not referenced by any task in pool. Deleting.");
         close(p_conn->fd);
-        p_conn->fd = -1;
+        p_conn->fd = 0;
         // TODO: Update to empty or free anything else the client gets in its struct
 
         (void)pthread_mutex_destroy(&p_conn->mutex);
@@ -342,6 +343,13 @@ static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
     }
 
     p_new_conns_q = p_mgr->p_new_conns;
+
+    if (0 == p_new_conns_q->num_items)
+    {
+        LOG_INFO("No new connections to add.");
+        res = 0;
+        goto end;
+    }
 
     while (0 != p_new_conns_q->num_items)
     {
@@ -424,6 +432,7 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cu
 
     if (cur_size == max_size)
     {
+        // TODO: Need to figure out how to reassign the p_fd point in each ctx after resizing
         LOG_INFO("Poll array needs to be resized. Attempting.");
 
         if (UINT16_MAX == cur_size)
@@ -459,7 +468,7 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cu
     p_pfds[cur_size].events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
     p_pfds[cur_size].revents = 0;
 
-    p_ctx->p_fd = &p_pfds[cur_size];
+    p_ctx->p_fd = p_pfds + cur_size;
 
     res = 0;
 

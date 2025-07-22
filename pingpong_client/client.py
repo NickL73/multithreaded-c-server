@@ -32,15 +32,19 @@ def main(host: str, port: int, max_volleys: int):
         raise ValueError("Maximum volleys must be less than 128")
 
     bad_msg_count = 0
+    sent_msg_count = 0
     with socket.create_connection((host, port)) as sock:
         sock.settimeout(5)
 
-        for volley in range(max_volleys):
+        volley = 0
+        for v in range(max_volleys):
+            print(f"Sending volley {v}")
             ping_msg = make_ping(volley)
             ping_msg_type, ping_msg_len, ping_msg_volley, ping_msg_payload = parse_pong(ping_msg)
-            print(
-                f"Sending message: type={ping_msg_type}, len={ping_msg_len}, volley={ping_msg_volley}, payload={ping_msg_payload}")
+            # print(
+            #     f"Sending message: type={ping_msg_type}, len={ping_msg_len}, volley={ping_msg_volley}, payload={ping_msg_payload}")
             sock.sendall(ping_msg)
+            sent_msg_count += 1
 
             try:
                 data = sock.recv(struct.calcsize(TOTAL_FMT))
@@ -49,13 +53,15 @@ def main(host: str, port: int, max_volleys: int):
                 break
 
             msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
-            if msg_type != PONG_TYPE or msg_payload != 'pong':
-                print(f"Unexpected response: type={msg_type}, buf={buf}")
+            if msg_type != PONG_TYPE or msg_payload != 'pong' or msg_volley != volley + 1:
+                # print(
+                #     f"Unexpected response: type={msg_type}, buf={msg_payload}, volley={msg_volley}, expected volley={volley + 1}")
                 bad_msg_count += 1
 
-            print(f"Received message: type={msg_type}, len={msg_len}, volley={msg_volley}, payload={msg_payload}")
+            # print(f"Received message: type={msg_type}, len={msg_len}, volley={msg_volley}, payload={msg_payload}")
+            volley = msg_volley + 1
 
-    print(f"Completed sending messages. Bad message count: {bad_msg_count}")
+    print(f"Completed sending {sent_msg_count} messages. Bad message count: {bad_msg_count}")
 
 
 if __name__ == "__main__":

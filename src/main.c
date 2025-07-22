@@ -28,11 +28,11 @@ static int  setup_signal_handlers(void);
 
 int main(int argc, char * argv[])
 {
-    int err = 0;
-    int res = -1;
-    int sfd = -1;
-
-    conn_mgr_t conn_mgr = {0};
+    int          err       = 0;
+    int          res       = -1;
+    int          sfd       = -1;
+    conn_ctx_t * p_cur_ctx = NULL;
+    conn_mgr_t   conn_mgr  = {0};
 
     // TODO: Start a single thread to handle signals
 
@@ -95,6 +95,13 @@ int main(int argc, char * argv[])
 
         for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
         {
+            err = ezarr_get_at(conn_mgr.p_conns, conn, (void **)&p_cur_ctx);
+            if (0 != err)
+            {
+                LOG_FATAL("Failed to get connection context");
+                goto destroy_connmgr;
+            }
+
             /* Check if the connection has been marked for deletion before tasking anything to the threadpool */
             LOG_INFO("Checking status of connection.");
             err = connmgr_check_active_connection((conn_ctx_t *)(conn_mgr.p_conns->pp_buf[conn]));
@@ -125,7 +132,7 @@ int main(int argc, char * argv[])
                 // TODO: Check if we're at the maximum number of connections (this is really impractical)
                 if (sfd == conn_mgr.p_pfds[conn].fd)
                 {
-                    err = nl_accept(conn_mgr.p_pfds[conn].fd, conn_mgr.p_new_conns);
+                    err = nl_accept(conn_mgr.p_pfds[conn].fd, &conn_mgr);
                     if (-1 == err)
                     {
                         LOG_ERROR("Failed to accept new connections");
@@ -135,34 +142,34 @@ int main(int argc, char * argv[])
 
                 else
                 {
-                    err = nl_handle_sock_data_in((conn_ctx_t *)(&(conn_mgr.p_conns->pp_buf[conn])));
+                    err = nl_handle_sock_data_in(p_cur_ctx);
                 }
             }
 
             if (conn_mgr.p_pfds[conn].revents & (POLLHUP | POLLERR | POLLNVAL))
             {
                 LOG_INFO("Connection on fd %d closed. Marking for deletion.", conn_mgr.p_pfds[conn].fd);
-                err = pthread_mutex_lock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
-                if (0 != err)
-                {
-                    LOG_FATAL("Failed to lock mutex on dead connection.");
-                    goto destroy_connmgr;
-                }
+                // err = pthread_mutex_lock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
+                // if (0 != err)
+                // {
+                //     LOG_FATAL("Failed to lock mutex on dead connection.");
+                //     goto destroy_connmgr;
+                // }
 
                 ((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->b_marked_for_deletion = true;
 
-                err = pthread_mutex_unlock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
-                if (0 != err)
-                {
-                    LOG_FATAL("Failed to unlock mutex on dead connection.");
-                    goto destroy_connmgr;
-                }
+                // err = pthread_mutex_unlock(&((conn_ctx_t *)&(conn_mgr.p_conns->pp_buf[conn]))->mutex);
+                // if (0 != err)
+                // {
+                //     LOG_FATAL("Failed to unlock mutex on dead connection.");
+                //     goto destroy_connmgr;
+                // }
             }
 
             if (conn_mgr.p_pfds[conn].revents & POLLOUT)
             {
                 LOG_INFO("Connection %d is ready for writing", conn);
-                err = nl_handle_sock_data_out((conn_ctx_t *)(&(conn_mgr.p_conns[conn])));
+                err = nl_handle_sock_data_out(p_cur_ctx);
             }
         }
 
@@ -172,6 +179,8 @@ int main(int argc, char * argv[])
             LOG_FATAL("Failed to update connections");
             break;
         }
+
+        p_cur_ctx = NULL;
     }
 
     /* Exiting cleanly from the loop */

@@ -121,16 +121,15 @@ end:
     return fd;
 }
 
-int nl_accept(const int fd, ezqueue_t * p_new_conns)
+int nl_accept(const int fd, conn_mgr_t * p_mgr)
 {
-    assert(NULL != p_new_conns);
+    assert(NULL != p_mgr);
 
     int                     clifd   = -1;
     int                     err     = -1;
     int                     res     = -1;
     struct sockaddr_storage addr    = {0};
     socklen_t               addrlen = sizeof(addr);
-    conn_ctx_t *            p_ctx   = NULL;
 
     while (1)
     {
@@ -140,38 +139,21 @@ int nl_accept(const int fd, ezqueue_t * p_new_conns)
             break;
         }
 
-        p_ctx = (conn_ctx_t *)malloc(sizeof(conn_ctx_t));
-        if (NULL == p_ctx)
-        {
-            LOG_ERROR("Failed to allocate memory for conn_ctx_t");
-            close(clifd);
-            clifd = -1;
-            goto end;
-        }
+        LOG_INFO("Accepted new connection on fd %d", clifd);
 
-        p_ctx->fd = clifd;
-        clifd     = -1;
-
-        memcpy(&(p_ctx->addr), &addr, sizeof(addr));
-        memset(&addr, 0, sizeof(addr));
-        addrlen = sizeof(addr);
-
-        err = nl_set_nonblocking(p_ctx->fd);
+        err = nl_set_nonblocking(clifd);
         if (-1 == err)
         {
             LOG_ERROR("Failed to set socket to non-blocking mode");
-            goto cleanup_ctx;
+            goto end;
         }
 
-        err = ezq_enqueue(p_new_conns, p_ctx);
+        err = connmgr_create_new_conn(clifd, p_mgr);
         if (0 != err)
         {
-            LOG_ERROR("Failed to enqueue new connection");
-            goto cleanup_ctx;
+            LOG_ERROR("Failed to create new connection context");
+            goto cleanup_cur_fd;
         }
-
-        LOG_INFO("Accepted new connection on fd %d.", p_ctx->fd);
-        p_ctx = NULL;
     }
 
     if ((EAGAIN == errno) || (EWOULDBLOCK == errno))
@@ -182,13 +164,9 @@ int nl_accept(const int fd, ezqueue_t * p_new_conns)
 end:
     return res;
 
-cleanup_ctx:
-    close(p_ctx->fd);
-    p_ctx->fd = -1;
-
-    free(p_ctx);
-    p_ctx = NULL;
-    return -1;
+cleanup_cur_fd:
+    close(clifd);
+    return res;
 }
 
 int nl_set_nonblocking(const int fd)
@@ -215,6 +193,7 @@ int nl_handle_sock_data_in(conn_ctx_t * p_ctx)
 
     switch (p_ctx->state)
     {
+        LOG_DEBUG("Client STATE: %d", p_ctx->state);
         case READ_HEADER:
             res = read_header(p_ctx);
             break;
@@ -255,6 +234,7 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
                 p_ctx->p_fd->events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
                 p_ctx->state         = READ_HEADER;
                 p_ctx->bytes_to_read = HEADER_SIZE;
+                memset(p_ctx->p_send_buf, 0, IO_BUF_SIZE);
             }
             res = 0;
             break;
@@ -266,6 +246,7 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
             break;
         case NL_SEND_ERR:
             LOG_ERROR("Failed to write to socket on fd %d.", p_ctx->fd);
+            p_ctx->b_marked_for_deletion = true; // TODO: This might be a touch aggressive. But SIGPIPE seemed to happen
             break;
         default:
             LOG_ERROR("Unknown error writing to socket on fd %d.", p_ctx->fd);
@@ -327,6 +308,7 @@ static nl_internal_err_t nl_recvall(int fd, void * p_buf, size_t len, size_t * p
     ssize_t           bytes_read = 0;
     size_t            total_read = 0;
 
+    LOG_DEBUG("Attempting to read %lu bytes from socket on fd %d", len, fd);
     while (total_read < len)
     {
         errno      = 0;
@@ -357,6 +339,7 @@ static nl_internal_err_t nl_recvall(int fd, void * p_buf, size_t len, size_t * p
     }
 
     *p_bytes_read = total_read;
+    LOG_DEBUG("Received %lu bytes from socket on fd %d", total_read, fd);
     return res;
 }
 
@@ -367,8 +350,8 @@ static int read_header(conn_ctx_t * p_ctx)
     int               res          = -1;
     size_t            bytes_read   = 0;
     size_t            incoming_len = 0;
-    nl_internal_err_t err          = nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read),
-                                                (p_ctx->bytes_to_read - p_ctx->bytes_read), &bytes_read);
+    nl_internal_err_t err =
+      nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read), p_ctx->bytes_to_read, &bytes_read);
 
     p_ctx->bytes_read += bytes_read;
     p_ctx->bytes_to_read -= bytes_read;
@@ -378,13 +361,14 @@ static int read_header(conn_ctx_t * p_ctx)
         case NL_IO_SUCCESS:
             if (p_ctx->bytes_read == HEADER_SIZE)
             {
-                memcpy(&incoming_len, p_ctx->p_recv_buf, HEADER_SIZE);
+                memcpy(&incoming_len, p_ctx->p_recv_buf + 1, HEADER_SIZE); // TODO define this 1 (offset after type)
                 incoming_len = ntohs(incoming_len);
 
                 LOG_INFO("Received header and expecting message of %lu bytes.", incoming_len);
+                // TODO: More intelligent saving of type and length
                 p_ctx->bytes_to_read = incoming_len;
-                p_ctx->bytes_read    = 0;
-                p_ctx->state         = READ_CONTENT;
+                LOG_DEBUG("Setting bytes_to_read to %lu", p_ctx->bytes_to_read);
+                p_ctx->state = READ_CONTENT;
             }
             res = 0;
             break;
@@ -412,13 +396,17 @@ static int read_content(conn_ctx_t * p_ctx)
 {
     assert(NULL != p_ctx);
 
-    int               res        = -1;
-    size_t            bytes_read = 0;
-    nl_internal_err_t err        = nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read),
-                                              (p_ctx->bytes_to_read - p_ctx->bytes_read), &bytes_read);
+    int    res        = -1;
+    size_t bytes_read = 0;
+    LOG_DEBUG("TO READ: %lu -- READ: %lu", p_ctx->bytes_to_read, p_ctx->bytes_read);
+    nl_internal_err_t err =
+      nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read), p_ctx->bytes_to_read, &bytes_read);
 
     p_ctx->bytes_read += bytes_read;
     p_ctx->bytes_to_read -= bytes_read;
+
+    LOG_DEBUG("Received %lu bytes total from socket on fd %d. %lu bytes remaining.", p_ctx->bytes_read, p_ctx->fd,
+              p_ctx->bytes_to_read);
 
     switch (err)
     {
@@ -426,12 +414,15 @@ static int read_content(conn_ctx_t * p_ctx)
             if (0 == p_ctx->bytes_to_read)
             {
                 LOG_INFO("Received all content for message. Will send response.");
-                (void)proto_pingpong_create_response(p_ctx->p_recv_buf, p_ctx->p_send_buf,
-                                                     (HEADER_SIZE + p_ctx->bytes_read), &p_ctx->bytes_to_send);
+                // TODO: More intelligent response generation based on type
+                (void)proto_pingpong_create_response(p_ctx->p_recv_buf, p_ctx->p_send_buf, p_ctx->bytes_read,
+                                                     &p_ctx->bytes_to_send);
 
                 p_ctx->bytes_to_read = 0;
                 p_ctx->bytes_read    = 0;
                 p_ctx->state         = WRITE_RESPONSE;
+                p_ctx->p_fd->events  = (POLLOUT | POLLHUP | POLLERR | POLLNVAL);
+                memset(p_ctx->p_recv_buf, 0, IO_BUF_SIZE);
             }
             res = 0;
             break;
