@@ -385,8 +385,9 @@ end:
 
 static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
 {
-    int res       = -1;
-    int write_idx = 0;
+    int          res       = -1;
+    int          write_idx = 0;
+    conn_ctx_t * p_conn    = NULL;
     if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
     {
         LOG_ERROR("Invalid argument");
@@ -415,7 +416,22 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
     }
 
     p_mgr->num_active_conns = write_idx;
-    res                     = 0;
+
+    /* Have to reset the pointers to pollfd array in each context after shuffling */
+    for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
+    {
+        res = ezarr_get_at(p_mgr->p_conns, idx, &p_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to get connection at index %d", idx);
+            goto end;
+        }
+
+        p_conn->p_fd = p_mgr->p_pfds + idx;
+        p_conn       = NULL;
+    }
+
+    res = 0;
 
 end:
     return res;
