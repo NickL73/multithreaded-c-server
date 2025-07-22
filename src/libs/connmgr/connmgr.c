@@ -131,10 +131,81 @@ end:
 
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
 {
-    // Create the conn_ctx_t structure
-    // Queue the structure for adding
-    // TODO
-    return 0;
+    int          res    = -1;
+    conn_ctx_t * p_conn = NULL;
+
+    if ((NULL == p_mgr) || (fd < 0))
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    p_conn = malloc(sizeof(conn_ctx_t));
+    if (NULL == p_conn)
+    {
+        LOG_ERROR("Failed to allocate memory for conn_ctx_t");
+        goto end;
+    }
+
+    res = pthread_mutex_init(&p_conn->mutex, NULL);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to initialize mutex");
+        goto destroy_conn_ctx;
+    }
+
+    p_conn->p_recv_buf = malloc(IO_BUF_SIZE * sizeof(char));
+    if (NULL == p_conn->p_recv_buf)
+    {
+        LOG_ERROR("Failed to allocate memory for recv buffer");
+        goto destroy_mutex;
+    }
+
+    p_conn->p_send_buf = malloc(IO_BUF_SIZE * sizeof(char));
+    if (NULL == p_conn->p_send_buf)
+    {
+        LOG_ERROR("Failed to allocate memory for send buffer");
+        goto destroy_recv_buf;
+    }
+
+    p_conn->ref_count             = 0;
+    p_conn->b_marked_for_deletion = false;
+    p_conn->fd                    = fd;
+
+    p_conn->bytes_read    = 0;
+    p_conn->bytes_to_read = HEADER_SIZE;
+
+    p_conn->bytes_sent    = 0;
+    p_conn->bytes_to_send = 0;
+
+    p_conn->state = READ_HEADER;
+
+    res = ezq_enqueue(p_mgr->p_new_conns, p_conn);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to enqueue new connection");
+        goto destroy_send_buf;
+    }
+
+    return res;
+
+destroy_send_buf:
+    free(p_conn->p_send_buf);
+    p_conn->p_send_buf = NULL;
+
+destroy_recv_buf:
+    free(p_conn->p_recv_buf);
+    p_conn->p_recv_buf = NULL;
+
+destroy_mutex:
+    (void)pthread_mutex_destroy(&p_conn->mutex);
+
+destroy_conn_ctx:
+    free(p_conn);
+    p_conn = NULL;
+
+end:
+    return res;
 }
 
 int connmgr_check_active_connection(conn_ctx_t * p_ctx)

@@ -7,6 +7,9 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#define HEADER_SIZE 3
+#define IO_BUF_SIZE 1024
+
 #ifdef NDEBUG
 #define LOG_MSG(level, ...) ((void)0)
 #else

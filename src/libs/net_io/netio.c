@@ -17,7 +17,6 @@
 #include <unistd.h>
 
 #define CONNECTION_BACKLOG 100
-#define HEADER_SIZE        3 /* 1 byte type + 2 byte length */
 
 typedef enum nl_internal_err_t
 {
