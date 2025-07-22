@@ -26,7 +26,7 @@ volatile sig_atomic_t g_should_shutdown = 0;
 static void sighandler(int signum);
 static int  setup_signal_handlers(void);
 
-int main(int argc, char * argv[])
+int main(void)
 {
     int          err       = 0;
     int          res       = -1;

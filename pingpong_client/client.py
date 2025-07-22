@@ -44,7 +44,7 @@ def main(host: str, port: int, max_volleys: int, jitter: bool = False):
         volley = 0
         for v in range(max_volleys):
             if jitter:
-                time.sleep(random.uniform(0.0, 1.0))
+                time.sleep(random.uniform(0.0, 0.05))
             ping_msg = make_ping(volley)
             sock.sendall(ping_msg)
             sent_msg_count += 1
