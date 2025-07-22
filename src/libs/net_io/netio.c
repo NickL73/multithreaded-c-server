@@ -221,6 +221,8 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
     }
 
     err = nl_sendall(p_ctx->fd, p_ctx->p_send_buf, p_ctx->bytes_to_send, &bytes_sent);
+    p_ctx->bytes_to_send -= bytes_sent;
+    p_ctx->bytes_sent += bytes_sent;
     switch (err)
     {
         case NL_IO_SUCCESS:
@@ -296,6 +298,7 @@ static nl_internal_err_t nl_sendall(int fd, const void * p_buf, size_t len, size
         res = NL_IO_SUCCESS;
     }
 
+    *p_bytes_sent = total_sent;
     return res;
 }
 
@@ -427,7 +430,7 @@ static int read_content(conn_ctx_t * p_ctx)
             res = 0;
             break;
         case NL_IO_EWOULDBLOCK:
-            LOG_INFO("Connection on fd %d would block. Will poll again when ready.", p_ctx->fd);
+            LOG_INFO("Connection on fd %d would block. Will poll for readiness.", p_ctx->fd);
             res = 0;
             break;
         case NL_RECV_ERR:

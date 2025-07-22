@@ -21,7 +21,7 @@ int proto_pingpong_create_response(char * p_in_buf, char * p_out_buf, uint16_t i
         goto end;
     }
 
-    if ((sizeof(uint8_t) + PING_PONG_LEN) != inbuf_len)
+    if (sizeof(ping_pong_t) != inbuf_len)
     {
         LOG_WARN("Invalid ping pong message length. Sending error code back.");
         pong_response.type   = PING_PONG_ERR;

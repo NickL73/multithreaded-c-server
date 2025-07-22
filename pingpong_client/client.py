@@ -34,11 +34,10 @@ def main(host: str, port: int, max_volleys: int):
     bad_msg_count = 0
     sent_msg_count = 0
     with socket.create_connection((host, port)) as sock:
-        sock.settimeout(5)
+        sock.settimeout(500)
 
         volley = 0
         for v in range(max_volleys):
-            print(f"Sending volley {v}")
             ping_msg = make_ping(volley)
             ping_msg_type, ping_msg_len, ping_msg_volley, ping_msg_payload = parse_pong(ping_msg)
             # print(
@@ -48,18 +47,19 @@ def main(host: str, port: int, max_volleys: int):
 
             try:
                 data = sock.recv(struct.calcsize(TOTAL_FMT))
+                msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
+                if msg_type != PONG_TYPE or msg_payload != b'pong\0' or msg_volley != volley + 1:
+                    print(
+                        f"Unexpected response: type={msg_type}, buf={msg_payload}, volley={msg_volley}, expected volley={volley + 1}")
+                    bad_msg_count += 1
+                    continue
+
+                print(f"Received message: type={msg_type}, len={msg_len}, volley={msg_volley}, payload={msg_payload}")
+                volley = msg_volley + 1
+
             except socket.timeout:
                 print("Socket timed out")
                 break
-
-            msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
-            if msg_type != PONG_TYPE or msg_payload != 'pong' or msg_volley != volley + 1:
-                # print(
-                #     f"Unexpected response: type={msg_type}, buf={msg_payload}, volley={msg_volley}, expected volley={volley + 1}")
-                bad_msg_count += 1
-
-            # print(f"Received message: type={msg_type}, len={msg_len}, volley={msg_volley}, payload={msg_payload}")
-            volley = msg_volley + 1
 
     print(f"Completed sending {sent_msg_count} messages. Bad message count: {bad_msg_count}")
 
