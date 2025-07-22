@@ -288,7 +288,11 @@ int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
         LOG_INFO("Connection is not referenced by any task in pool. Deleting.");
         close(p_conn->fd);
         p_conn->fd = 0;
-        // TODO: Update to empty or free anything else the client gets in its struct
+
+        free(p_conn->p_recv_buf);
+        p_conn->p_recv_buf = NULL;
+        free(p_conn->p_send_buf);
+        p_conn->p_send_buf = NULL;
 
         (void)pthread_mutex_destroy(&p_conn->mutex);
         free(p_conn);
@@ -448,7 +452,6 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cu
 
     if (cur_size == max_size)
     {
-        // TODO: Need to figure out how to reassign the p_fd point in each ctx after resizing
         LOG_INFO("Poll array needs to be resized. Attempting.");
 
         if (UINT16_MAX == cur_size)
