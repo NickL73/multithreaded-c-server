@@ -269,7 +269,6 @@ static nl_internal_err_t nl_sendall(int fd, const void * p_buf, size_t len, size
 {
     assert(NULL != p_buf);
     assert(NULL != p_bytes_sent);
-    assert(0 < len);
 
     nl_internal_err_t res        = NL_IO_GENERIC_ERROR;
     ssize_t           bytes_sent = 0;
