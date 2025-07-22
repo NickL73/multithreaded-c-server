@@ -22,6 +22,23 @@ typedef struct conn_ctx
     bool                    b_marked_for_deletion;
     int                     fd;
     struct sockaddr_storage addr;
+
+    unsigned char * p_recv_buf;
+    size_t          bytes_read;
+    size_t          bytes_to_read;
+
+    char * p_send_buf;
+    size_t bytes_sent;
+    size_t bytes_to_send;
+
+    enum
+    {
+        READ_HEADER,
+        READ_CONTENT,
+        WRITE_RESPONSE,
+    } state;
+
+    uint16_t msg_len;
 } conn_ctx_t;
 
 typedef struct conn_mgr

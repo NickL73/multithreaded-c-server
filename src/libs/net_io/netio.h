@@ -6,10 +6,11 @@
 #define NETIO_H
 
 #include "connmgr.h"
+#include "ezqueue.h"
 
 int nl_start_listener(char * p_host, char * p_service);
 
-int nl_accept(const int fd, const conn_mgmt_queue_t * p_new_conns);
+int nl_accept(const int fd, ezqueue_t * p_new_conns);
 
 int nl_set_nonblocking(const int fd);
 

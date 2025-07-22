@@ -17,7 +17,6 @@
 #include <unistd.h>
 
 #define CONNECTION_BACKLOG 100
-#define LISTENER_IDX       0
 
 /* STATIC FUNCTION DECLARATIONS */
 static int nl_read(conn_ctx_t * p_ctx);
@@ -190,19 +189,14 @@ int nl_set_nonblocking(const int fd)
     return res;
 }
 
-int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
+int nl_handle_sock_data_in(conn_ctx_t * p_ctx)
 {
     int res = -1;
 
-    if ((NULL == p_ctx) || (NULL == p_new_conns))
+    if (NULL == p_ctx)
     {
         LOG_ERROR("Invalid argument");
         goto end;
-    }
-
-    if (LISTENER_IDX == p_ctx->idx)
-    {
-        res = nl_accept(p_ctx->fd, p_new_conns);
     }
 
     else
@@ -213,6 +207,11 @@ int nl_handle_sock_data_in(conn_ctx_t * p_ctx, conn_mgmt_queue_t * p_new_conns)
 
 end:
     return res;
+}
+
+int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
+{
+    return 0;
 }
 
 /* STATIC FUNCTION DEFINITIONS */
