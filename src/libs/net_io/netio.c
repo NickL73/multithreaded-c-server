@@ -17,9 +17,20 @@
 #include <unistd.h>
 
 #define CONNECTION_BACKLOG 100
+#define HEADER_SIZE        3 /* 1 byte type + 2 byte length */
+
+typedef enum nl_internal_err_t
+{
+    NL_IO_GENERIC_ERROR,
+    NL_IO_SUCCESS,
+    NL_IO_EOF,
+    NL_IO_EWOULDBLOCK,
+    NL_RECV_ERR
+} nl_internal_err_t;
 
 /* STATIC FUNCTION DECLARATIONS */
-static int nl_read(conn_ctx_t * p_ctx);
+static int read_header(conn_ctx_t * p_ctx);
+static int read_content(conn_ctx_t * p_ctx);
 
 /* PUBLIC FUNCTION DEFINITONS */
 int nl_start_listener(char * p_host, char * p_service)
@@ -199,11 +210,18 @@ int nl_handle_sock_data_in(conn_ctx_t * p_ctx)
         goto end;
     }
 
-    else
+    switch (p_ctx->state)
     {
-        res = nl_read(p_ctx);
+        case READ_HEADER:
+            res = read_header(p_ctx);
+            break;
+        case READ_CONTENT:
+            res = read_content(p_ctx);
+            break;
+        default:
+            res = -1;
+            LOG_ERROR("Invalid state on client read");
     }
-
 
 end:
     return res;
@@ -216,8 +234,105 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
 
 /* STATIC FUNCTION DEFINITIONS */
 
+// T: 1 byte
+// L: 2 bytes
+// V: determined by L
 
-static int nl_read(conn_ctx_t * p_ctx)
+static nl_internal_err_t nl_recvall(int fd, void * p_buf, size_t len, size_t * p_bytes_read)
 {
-    return 0;
+    assert(NULL != p_buf);
+    assert(NULL != p_bytes_read);
+
+    nl_internal_err_t res        = NL_IO_GENERIC_ERROR;
+    ssize_t           bytes_read = 0;
+    size_t            total_read = 0;
+
+    while (total_read < len)
+    {
+        errno      = 0;
+        bytes_read = recv(fd, (char *)p_buf + total_read, len - total_read, 0);
+        if (0 > bytes_read)
+        {
+            if (EINTR == errno)
+            {
+                continue;
+            }
+
+            res = ((EWOULDBLOCK == errno) || (EAGAIN == errno)) ? NL_IO_EWOULDBLOCK : NL_RECV_ERR;
+            break;
+        }
+
+        if (0 == bytes_read)
+        {
+            res = NL_IO_EOF;
+            break;
+        }
+
+        total_read += (size_t)bytes_read;
+    }
+
+    if ((NL_IO_EWOULDBLOCK != res) && (NL_RECV_ERR != res) && (NL_IO_EOF != res))
+    {
+        res = NL_IO_SUCCESS;
+    }
+
+    *p_bytes_read = total_read;
+    return res;
+}
+
+static int read_header(conn_ctx_t * p_ctx)
+{
+    assert(NULL != p_ctx);
+
+    int               res          = -1;
+    size_t            bytes_read   = 0;
+    size_t            incoming_len = 0;
+    nl_internal_err_t err          = nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read),
+                                                (p_ctx->bytes_to_read - p_ctx->bytes_read), &bytes_read);
+
+    p_ctx->bytes_read += bytes_read;
+    p_ctx->bytes_to_read -= bytes_read;
+
+    switch (err)
+    {
+        case NL_IO_SUCCESS:
+            if (p_ctx->bytes_read == HEADER_SIZE)
+            {
+                memcpy(&incoming_len, p_ctx->p_recv_buf, HEADER_SIZE);
+                incoming_len = ntohs(incoming_len);
+
+                LOG_INFO("Received header and expecting message of %lu bytes.", incoming_len);
+                p_ctx->bytes_to_read = incoming_len;
+                p_ctx->bytes_read    = 0;
+                p_ctx->state         = READ_CONTENT;
+            }
+            res = 0;
+            break;
+        case NL_IO_EWOULDBLOCK:
+            LOG_INFO("Connection on fd %d would block. Will poll again when ready.", p_ctx->fd);
+            res = 0;
+            break;
+        case NL_RECV_ERR:
+            LOG_ERROR("Failed to read from socket on fd %d.", p_ctx->fd);
+            break;
+        case NL_IO_EOF:
+            LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
+            p_ctx->b_marked_for_deletion = true;
+            res                          = 0;
+            break;
+        default:
+            LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);
+            break;
+    }
+
+    return res;
+}
+
+static int read_content(conn_ctx_t * p_ctx)
+{
+    assert(NULL != p_ctx);
+
+    int res = -1;
+
+    return res;
 }

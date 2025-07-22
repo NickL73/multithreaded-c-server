@@ -133,6 +133,8 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
 {
     // Create the conn_ctx_t structure
     // Queue the structure for adding
+    // TODO
+    return 0;
 }
 
 int connmgr_check_active_connection(conn_ctx_t * p_ctx)
