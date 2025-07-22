@@ -24,7 +24,8 @@ typedef enum nl_internal_err_t
     NL_IO_SUCCESS,
     NL_IO_EOF,
     NL_IO_EWOULDBLOCK,
-    NL_RECV_ERR
+    NL_RECV_ERR,
+    NL_SEND_ERR
 } nl_internal_err_t;
 
 /* STATIC FUNCTION DECLARATIONS */
@@ -237,6 +238,42 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
 // L: 2 bytes
 // V: determined by L
 
+static nl_internal_err_t nl_sendall(int fd, const void * p_buf, size_t len, size_t * p_bytes_sent)
+{
+    assert(NULL != p_buf);
+    assert(NULL != p_bytes_sent);
+    assert(0 < len);
+
+    nl_internal_err_t res        = NL_IO_GENERIC_ERROR;
+    ssize_t           bytes_sent = 0;
+    size_t            total_sent = 0;
+
+    while (total_sent < len)
+    {
+        errno      = 0;
+        bytes_sent = send(fd, (char *)p_buf + total_sent, len - total_sent, 0);
+        if (0 > bytes_sent)
+        {
+            if (EINTR == errno)
+            {
+                continue;
+            }
+
+            res = ((EWOULDBLOCK == errno) || (EAGAIN == errno)) ? NL_IO_EWOULDBLOCK : NL_SEND_ERR;
+            break;
+        }
+
+        total_sent += (size_t)bytes_sent;
+    }
+
+    if ((NL_IO_EWOULDBLOCK != res) && (NL_SEND_ERR != res))
+    {
+        res = NL_IO_SUCCESS;
+    }
+
+    return res;
+}
+
 static nl_internal_err_t nl_recvall(int fd, void * p_buf, size_t len, size_t * p_bytes_read)
 {
     assert(NULL != p_buf);
@@ -335,6 +372,40 @@ static int read_content(conn_ctx_t * p_ctx)
     size_t            bytes_read = 0;
     nl_internal_err_t err        = nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read),
                                               (p_ctx->bytes_to_read - p_ctx->bytes_read), &bytes_read);
+
+    p_ctx->bytes_read += bytes_read;
+    p_ctx->bytes_to_read -= bytes_read;
+
+    switch (err)
+    {
+        case NL_IO_SUCCESS:
+            if (0 == p_ctx->bytes_to_read)
+            {
+                LOG_INFO("Received all content for message. Will send response.");
+                // TODO: Spin off some action to prepare a response
+
+                p_ctx->bytes_to_read = 0;
+                p_ctx->bytes_read    = 0;
+                p_ctx->state         = WRITE_RESPONSE;
+            }
+            res = 0;
+            break;
+        case NL_IO_EWOULDBLOCK:
+            LOG_INFO("Connection on fd %d would block. Will poll again when ready.", p_ctx->fd);
+            res = 0;
+            break;
+        case NL_RECV_ERR:
+            LOG_ERROR("Failed to read from socket on fd %d.", p_ctx->fd);
+            break;
+        case NL_IO_EOF:
+            LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
+            p_ctx->b_marked_for_deletion = true;
+            res                          = 0;
+            break;
+        default:
+            LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);
+            break;
+    }
 
     return res;
 }
