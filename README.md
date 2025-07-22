@@ -8,3 +8,6 @@
 - Do I need to pair a lock with the pollfd array? It's possible multiple threads could be acting on the same entry
   (setting POLLIN or POLLOUT).
 - Figure out a strategy for max connections
+- Figure out a strategy for messages greater than max buffer size
+- Move b_marked_for_deletion into state struct as PENDING_DELETION
+- How can this design be modified to allow jobs to task out other jobs to the threadpool?

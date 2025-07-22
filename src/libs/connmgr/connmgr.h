@@ -17,10 +17,11 @@
 
 typedef struct conn_ctx
 {
-    pthread_mutex_t mutex;
-    int             ref_count;
-    bool            b_marked_for_deletion;
-    int             fd;
+    pthread_mutex_t         mutex;
+    int                     ref_count;
+    bool                    b_marked_for_deletion;
+    int                     fd;
+    struct sockaddr_storage addr;
 
     unsigned char * p_recv_buf;
     size_t          bytes_read;

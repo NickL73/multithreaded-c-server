@@ -331,7 +331,10 @@ static int read_content(conn_ctx_t * p_ctx)
 {
     assert(NULL != p_ctx);
 
-    int res = -1;
+    int               res        = -1;
+    size_t            bytes_read = 0;
+    nl_internal_err_t err        = nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read),
+                                              (p_ctx->bytes_to_read - p_ctx->bytes_read), &bytes_read);
 
     return res;
 }
