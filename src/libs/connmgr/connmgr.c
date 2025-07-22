@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
+static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
 static int connmgr_add_new_connections(conn_mgr_t * p_mgr);
 static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
 
@@ -172,6 +172,8 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
     p_conn->b_marked_for_deletion = false;
     p_conn->fd                    = fd;
 
+    p_conn->p_fd = NULL;
+
     p_conn->bytes_read    = 0;
     p_conn->bytes_to_read = HEADER_SIZE;
 
@@ -292,7 +294,7 @@ int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
 
         /* Remove connection from the conn_mgr arrays by setting sentinel values to get cleaned up */
         p_mgr->p_conns->pp_buf[conn_idx] = NULL;
-        p_mgr->p_pfds[conn_idx].fd       = -1;
+        memset(p_mgr->p_pfds + conn_idx, 0, sizeof(struct pollfd));
     }
 
 end:
@@ -316,6 +318,7 @@ int connmgr_update_connections(conn_mgr_t * p_mgr)
     }
 
     res = connmgr_add_new_connections(p_mgr);
+    if (0 != res)
     {
         LOG_ERROR("Failed to add new connections");
     }
@@ -356,7 +359,7 @@ static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
             break;
         }
 
-        res = add_to_pollfd(((conn_ctx_t *)p_new_conn)->fd, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
+        res = add_to_pollfd((conn_ctx_t *)p_new_conn, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
         if (0 != res)
         {
             LOG_ERROR("Failed to add to poll array");
@@ -392,12 +395,12 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
     /* This logic is already contained in ezarray.c, but not generalized enough to use it for struct pollfd */
     for (int read_idx = 0; read_idx < p_mgr->max_conns; read_idx++)
     {
-        if (p_mgr->p_pfds[read_idx].fd != -1)
+        if (p_mgr->p_pfds[read_idx].fd != 0)
         {
             if (write_idx != read_idx)
             {
                 p_mgr->p_pfds[write_idx]   = p_mgr->p_pfds[read_idx];
-                p_mgr->p_pfds[read_idx].fd = -1;
+                p_mgr->p_pfds[read_idx].fd = 0;
             }
             write_idx++;
         }
@@ -410,9 +413,10 @@ end:
     return res;
 }
 
-static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size)
+static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size)
 {
     assert(NULL != p_pfds);
+    assert(NULL != p_ctx);
 
     int             res     = -1;
     struct pollfd * p_tmp   = NULL;
@@ -451,9 +455,11 @@ static int add_to_pollfd(int fd, struct pollfd * p_pfds, uint16_t cur_size, uint
         p_tmp  = NULL;
     }
 
-    p_pfds[cur_size].fd      = fd;
+    p_pfds[cur_size].fd      = p_ctx->fd;
     p_pfds[cur_size].events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
     p_pfds[cur_size].revents = 0;
+
+    p_ctx->p_fd = &p_pfds[cur_size];
 
     res = 0;
 

@@ -1,0 +1,62 @@
+//
+// Created by nick on 7/22/25.
+//
+
+#include "pong.h"
+
+#include "utils.h"
+
+#include <assert.h>
+
+int proto_pingpong_create_response(char * p_in_buf, char * p_out_buf, uint16_t inbuf_len, uint16_t * p_out_len)
+{
+    int           res           = -1;
+    ping_pong_t   pong_response = {0};
+    ping_pong_t * p_in          = NULL;
+
+    if ((NULL == p_in_buf) || (NULL == p_out_buf) || (NULL == p_out_len))
+    {
+        LOG_ERROR("Invalid arguments");
+        goto end;
+    }
+
+    if (sizeof(ping_pong_t) != inbuf_len)
+    {
+        LOG_WARN("Invalid ping pong message length. Sending error code back.");
+        pong_response.type   = PING_PONG_ERR;
+        pong_response.len    = sizeof(ping_pong_t);
+        pong_response.volley = 0;
+        memcpy(p_out_buf, &pong_response, sizeof(ping_pong_t));
+        *p_out_len = sizeof(ping_pong_t);
+
+        res = 0;
+        goto end;
+    }
+
+    p_in = (ping_pong_t *)p_in_buf;
+    if ((PING_TYPE != p_in->type) || (strncmp(p_in->buf, "ping", sizeof(p_in->buf)) != 0))
+    {
+        LOG_WARN("Invalid ping pong message type. Sending error code back.");
+        pong_response.type   = PING_PONG_ERR;
+        pong_response.len    = sizeof(ping_pong_t);
+        pong_response.volley = 0;
+        memcpy(p_out_buf, &pong_response, sizeof(ping_pong_t));
+        *p_out_len = sizeof(ping_pong_t);
+    }
+
+    else
+    {
+        LOG_INFO("Received ping pong message. Sending pong back.");
+        pong_response.type   = PONG_TYPE;
+        pong_response.len    = sizeof(ping_pong_t);
+        pong_response.volley = p_in->volley + 1;
+        memcpy(pong_response.buf, "pong", sizeof(pong_response.buf));
+        memcpy(p_out_buf, &pong_response, sizeof(ping_pong_t));
+        *p_out_len = sizeof(ping_pong_t);
+    }
+
+    res = 0;
+
+end:
+    return res;
+}

@@ -175,10 +175,12 @@ int main(int argc, char * argv[])
     }
 
     /* Exiting cleanly from the loop */
+    LOG_INFO("Exiting cleanly from the main loop.");
     res = 0;
 
 cleanup_connections:
     // TODO: Close everything tracked by conn mgr
+    close(sfd);
 
 destroy_connmgr:
     (void)connmgr_deinit(&conn_mgr);
@@ -199,7 +201,7 @@ static int setup_signal_handlers(void)
     int              res = -1;
     struct sigaction sa  = {0};
     sa.sa_handler        = sighandler;
-    sa.sa_flags          = 0;
+    sa.sa_flags          = SA_RESTART;
     if (0 != sigemptyset(&sa.sa_mask))
     {
         LOG_ERROR("Failed to empty signal set");

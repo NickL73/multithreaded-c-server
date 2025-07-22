@@ -23,6 +23,8 @@ typedef struct conn_ctx
     int                     fd;
     struct sockaddr_storage addr;
 
+    struct pollfd * p_fd;
+
     unsigned char * p_recv_buf;
     size_t          bytes_read;
     size_t          bytes_to_read;
@@ -38,7 +40,6 @@ typedef struct conn_ctx
         WRITE_RESPONSE,
     } state;
 
-    uint16_t msg_len;
 } conn_ctx_t;
 
 typedef struct conn_mgr

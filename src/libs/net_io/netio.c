@@ -5,6 +5,7 @@
 #include "netio.h"
 
 #include "connmgr.h"
+#include "pong.h"
 #include "utils.h"
 
 #include <assert.h>
@@ -29,8 +30,10 @@ typedef enum nl_internal_err_t
 } nl_internal_err_t;
 
 /* STATIC FUNCTION DECLARATIONS */
-static int read_header(conn_ctx_t * p_ctx);
-static int read_content(conn_ctx_t * p_ctx);
+static nl_internal_err_t nl_sendall(int fd, const void * p_buf, size_t len, size_t * p_bytes_sent);
+static nl_internal_err_t nl_recvall(int fd, void * p_buf, size_t len, size_t * p_bytes_read);
+static int               read_header(conn_ctx_t * p_ctx);
+static int               read_content(conn_ctx_t * p_ctx);
 
 /* PUBLIC FUNCTION DEFINITONS */
 int nl_start_listener(char * p_host, char * p_service)
@@ -229,7 +232,48 @@ end:
 
 int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
 {
-    return 0;
+    int               res        = -1;
+    nl_internal_err_t err        = NL_IO_GENERIC_ERROR;
+    size_t            bytes_sent = 0;
+    if (NULL == p_ctx)
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    err = nl_sendall(p_ctx->fd, p_ctx->p_send_buf, p_ctx->bytes_to_send, &bytes_sent);
+    switch (err)
+    {
+        case NL_IO_SUCCESS:
+            LOG_INFO("Successful response write on fd %d", p_ctx->fd);
+            if (0 == p_ctx->bytes_to_send)
+            {
+                p_ctx->bytes_to_send = 0;
+                p_ctx->bytes_sent    = 0;
+                memset(p_ctx->p_send_buf, 0, IO_BUF_SIZE);
+
+                p_ctx->p_fd->events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
+                p_ctx->state         = READ_HEADER;
+                p_ctx->bytes_to_read = HEADER_SIZE;
+            }
+            res = 0;
+            break;
+        case NL_IO_EWOULDBLOCK:
+            LOG_INFO("Connection on fd %d would block. Will poll again when ready.", p_ctx->fd);
+            p_ctx->bytes_to_send -= bytes_sent;
+            p_ctx->bytes_sent += bytes_sent;
+            res = 0;
+            break;
+        case NL_SEND_ERR:
+            LOG_ERROR("Failed to write to socket on fd %d.", p_ctx->fd);
+            break;
+        default:
+            LOG_ERROR("Unknown error writing to socket on fd %d.", p_ctx->fd);
+            break;
+    }
+
+end:
+    return res;
 }
 
 /* STATIC FUNCTION DEFINITIONS */
@@ -382,7 +426,8 @@ static int read_content(conn_ctx_t * p_ctx)
             if (0 == p_ctx->bytes_to_read)
             {
                 LOG_INFO("Received all content for message. Will send response.");
-                // TODO: Spin off some action to prepare a response
+                (void)proto_pingpong_create_response(p_ctx->p_recv_buf, p_ctx->p_send_buf,
+                                                     (HEADER_SIZE + p_ctx->bytes_read), &p_ctx->bytes_to_send);
 
                 p_ctx->bytes_to_read = 0;
                 p_ctx->bytes_read    = 0;
