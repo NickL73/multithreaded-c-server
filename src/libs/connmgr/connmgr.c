@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size);
+static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t cur_size, uint16_t max_size);
 static int connmgr_add_new_connections(conn_mgr_t * p_mgr);
 static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr);
 
@@ -408,7 +408,7 @@ static int connmgr_add_new_connections(conn_mgr_t * p_mgr)
             break;
         }
 
-        res = add_to_pollfd((conn_ctx_t *)p_new_conn, p_mgr->p_pfds, p_mgr->num_active_conns, p_mgr->max_conns);
+        res = add_to_pollfd((conn_ctx_t *)p_new_conn, &(p_mgr->p_pfds), p_mgr->num_active_conns, p_mgr->max_conns);
         if (0 != res)
         {
             LOG_ERROR("Failed to add to poll array");
@@ -478,14 +478,15 @@ end:
     return res;
 }
 
-static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cur_size, uint16_t max_size)
+static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t cur_size, uint16_t max_size)
 {
-    assert(NULL != p_pfds);
+    assert(NULL != pp_pfds);
     assert(NULL != p_ctx);
 
     int             res     = -1;
     struct pollfd * p_tmp   = NULL;
     uint16_t        new_max = 0;
+    struct pollfd * p_pfds  = *pp_pfds;
 
     if (cur_size == max_size)
     {
@@ -516,8 +517,9 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd * p_pfds, uint16_t cu
             goto end;
         }
 
-        p_pfds = p_tmp;
-        p_tmp  = NULL;
+        *pp_pfds = p_tmp;
+        p_pfds   = *pp_pfds;
+        p_tmp    = NULL;
     }
 
     p_pfds[cur_size].fd      = p_ctx->fd;
