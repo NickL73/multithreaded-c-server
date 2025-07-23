@@ -183,13 +183,14 @@ int main(void)
         p_cur_ctx = NULL;
     }
 
-    /* Exiting cleanly from the loop */
     LOG_INFO("Exiting cleanly from the main loop.");
+
+    // TODO: Wait for enqueued jobs to complete or clear them all out (shut down the threadpool)
+
     res = 0;
 
 cleanup_connections:
-    // TODO: Close everything tracked by conn mgr
-    close(sfd);
+    connmgr_destroy_all_conns(&conn_mgr);
 
 destroy_connmgr:
     (void)connmgr_deinit(&conn_mgr);

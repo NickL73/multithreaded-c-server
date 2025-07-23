@@ -53,6 +53,7 @@ typedef struct conn_mgr
 
 int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns);
 int connmgr_deinit(conn_mgr_t * p_mgr);
+int connmgr_destroy_all_conns(conn_mgr_t * p_mgr);
 
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
 

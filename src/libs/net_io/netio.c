@@ -363,7 +363,8 @@ static int read_header(conn_ctx_t * p_ctx)
         case NL_IO_SUCCESS:
             if (p_ctx->bytes_read == HEADER_SIZE)
             {
-                memcpy(&incoming_len, p_ctx->p_recv_buf + 1, HEADER_SIZE); // TODO define this 1 (offset after type)
+                /* Have to do some math to just get the length out of the header */
+                memcpy(&incoming_len, p_ctx->p_recv_buf + 1, HEADER_SIZE - 1);
                 incoming_len = ntohs(incoming_len);
 
                 LOG_INFO("Received header and expecting message of %lu bytes.", incoming_len);

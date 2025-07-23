@@ -129,6 +129,43 @@ end:
     return res;
 }
 
+int connmgr_destroy_all_conns(conn_mgr_t * p_mgr)
+{
+    int          res    = -1;
+    conn_ctx_t * p_conn = NULL;
+
+    if (NULL == p_mgr)
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    /* By the time this function is called, the threadpool has either been waited on or shut down so no need to lock */
+    for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
+    {
+        (void)ezarr_get_at(p_mgr->p_conns, idx, &p_conn);
+        if (NULL == p_conn)
+        {
+            continue;
+        }
+
+        close(p_conn->fd);
+        p_conn->fd = 0;
+
+        free(p_conn->p_recv_buf);
+        p_conn->p_recv_buf = NULL;
+        free(p_conn->p_send_buf);
+        p_conn->p_send_buf = NULL;
+
+        (void)pthread_mutex_destroy(&p_conn->mutex);
+        free(p_conn);
+        p_conn = NULL;
+    }
+
+end:
+    return res;
+}
+
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
 {
     int          res    = -1;
