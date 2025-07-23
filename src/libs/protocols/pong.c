@@ -9,7 +9,7 @@
 #include <assert.h>
 #include <netinet/in.h>
 
-int proto_pingpong_create_response(char * p_in_buf, char * p_out_buf, uint16_t inbuf_len, uint16_t * p_out_len)
+int proto_pingpong_create_response(unsigned char * p_in_buf, char * p_out_buf, uint16_t inbuf_len, uint16_t * p_out_len)
 {
     int           res           = -1;
     ping_pong_t   pong_response = {0};

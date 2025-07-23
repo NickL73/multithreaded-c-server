@@ -25,6 +25,6 @@ typedef struct __attribute__((packed)) ping_pong_t
     char     buf[PING_PONG_LEN];
 } ping_pong_t;
 
-int proto_pingpong_create_response(char * p_in_buf, char * p_out_buf, uint16_t in_len, uint16_t * p_out_len);
+int proto_pingpong_create_response(unsigned char * p_in_buf, char * p_out_buf, uint16_t in_len, uint16_t * p_out_len);
 
 #endif // PONG_H

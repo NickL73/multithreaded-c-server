@@ -143,7 +143,7 @@ int connmgr_destroy_all_conns(conn_mgr_t * p_mgr)
     /* By the time this function is called, the threadpool has either been waited on or shut down so no need to lock */
     for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
     {
-        (void)ezarr_get_at(p_mgr->p_conns, idx, &p_conn);
+        (void)ezarr_get_at(p_mgr->p_conns, idx, (void **)&p_conn);
         if (NULL == p_conn)
         {
             continue;
@@ -192,7 +192,7 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
         goto destroy_conn_ctx;
     }
 
-    p_conn->p_recv_buf = malloc(IO_BUF_SIZE * sizeof(char));
+    p_conn->p_recv_buf = malloc(IO_BUF_SIZE * sizeof(unsigned char));
     if (NULL == p_conn->p_recv_buf)
     {
         LOG_ERROR("Failed to allocate memory for recv buffer");
@@ -461,7 +461,7 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
     /* Have to reset the pointers to pollfd array in each context after shuffling */
     for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
     {
-        res = ezarr_get_at(p_mgr->p_conns, idx, &p_conn);
+        res = ezarr_get_at(p_mgr->p_conns, idx, (void **)&p_conn);
         if (0 != res)
         {
             LOG_ERROR("Failed to get connection at index %d", idx);
