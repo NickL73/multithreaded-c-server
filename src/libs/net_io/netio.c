@@ -419,7 +419,7 @@ static int read_content(conn_ctx_t * p_ctx)
                 LOG_INFO("Received all content for message. Will send response.");
                 // TODO: More intelligent response generation based on type
                 (void)proto_pingpong_create_response(p_ctx->p_recv_buf, p_ctx->p_send_buf, p_ctx->bytes_read,
-                                                     &p_ctx->bytes_to_send);
+                                                     (uint16_t *)&p_ctx->bytes_to_send);
 
                 p_ctx->bytes_to_read = 0;
                 p_ctx->bytes_read    = 0;
