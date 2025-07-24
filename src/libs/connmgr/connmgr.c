@@ -315,7 +315,7 @@ int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
         goto end;
     }
 
-    if (0 < p_conn->ref_count)
+    if (0 < ref_count)
     {
         LOG_INFO("Task pool still has references to this client. Will try to delete again later.");
     }

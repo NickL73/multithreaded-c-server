@@ -27,31 +27,31 @@ typedef enum
 } log_level_t;
 
 // Define the color codes associated with each log level
-#define COLOR_RESET   "\x1b[0m"  // reset the terminal color
-#define COLOR_DEBUG   "\x1b[37m" // white
-#define COLOR_INFO    "\x1b[32m" // green
-#define COLOR_WARN    "\x1b[33m" // yellow
-#define COLOR_ERROR   "\x1b[31m" // red
-#define COLOR_FATAL   "\x1b[31m" // also red
+#define COLOR_RESET         "\x1b[0m"  // reset the terminal color
+#define COLOR_DEBUG         "\x1b[37m" // white
+#define COLOR_INFO          "\x1b[32m" // green
+#define COLOR_WARN          "\x1b[33m" // yellow
+#define COLOR_ERROR         "\x1b[31m" // red
+#define COLOR_FATAL         "\x1b[31m" // also red
 
 // Don't want the full filepath, as it can clutter the output so just get relevant info
-#define __FILE_NAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+#define __SHORT_FILE_NAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 // Set a default maximum logging level if one wasn't defined at compilation
 #ifndef LOG_LEVEL
 #define LOG_LEVEL LOG_DEBUG
 #endif // LOG_LEVEL
 
-#define LOG_MSG(level, ...)                                                                                  \
-    do                                                                                                       \
-    {                                                                                                        \
-        if (LOG_LEVEL <= level)                                                                              \
-        {                                                                                                    \
-            const char * p_level_colors[] = {COLOR_DEBUG, COLOR_INFO, COLOR_WARN, COLOR_ERROR, COLOR_FATAL}; \
-            printf("[%s%s%s][%s:%d] ", p_level_colors[level], #level, COLOR_RESET, __FILE_NAME__, __LINE__); \
-            printf(__VA_ARGS__);                                                                             \
-            printf("\n");                                                                                    \
-        }                                                                                                    \
+#define LOG_MSG(level, ...)                                                                                        \
+    do                                                                                                             \
+    {                                                                                                              \
+        if (LOG_LEVEL <= level)                                                                                    \
+        {                                                                                                          \
+            const char * p_level_colors[] = {COLOR_DEBUG, COLOR_INFO, COLOR_WARN, COLOR_ERROR, COLOR_FATAL};       \
+            printf("[%s%s%s][%s:%d] ", p_level_colors[level], #level, COLOR_RESET, __SHORT_FILE_NAME__, __LINE__); \
+            printf(__VA_ARGS__);                                                                                   \
+            printf("\n");                                                                                          \
+        }                                                                                                          \
     } while (0)
 
 #endif // NDEBUG
