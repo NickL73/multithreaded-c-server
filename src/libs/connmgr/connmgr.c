@@ -482,11 +482,11 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t 
 {
     assert(NULL != pp_pfds);
     assert(NULL != p_ctx);
-    assert(0 != cur_size);
+    assert(0 < max_size);
 
     int             res     = -1;
     struct pollfd * p_tmp   = NULL;
-    uint16_t        new_max = cur_size * 2;
+    uint16_t        new_max = 0;
     struct pollfd * p_pfds  = *pp_pfds;
 
     if (cur_size == max_size)
@@ -504,6 +504,11 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t 
             LOG_WARN("Resizing poll array by double would overflow. Will attempt to resize to UINT16_MAX. Future "
                      "resizes will fail.");
             new_max = UINT16_MAX;
+        }
+
+        else
+        {
+            new_max = cur_size * 2;
         }
 
         p_tmp = realloc(p_pfds, sizeof(struct pollfd) * new_max);
