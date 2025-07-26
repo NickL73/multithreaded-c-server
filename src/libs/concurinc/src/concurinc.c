@@ -517,16 +517,16 @@ static void * coin_thread_worker(void * p_ctx)
         }
         p_tpool_ctx->active_tasks++;
 
-        err = pthread_mutex_unlock(&p_tpool_ctx->active_tasks_mutex);
-        if (0 != err)
-        {
-            break;
-        }
-
         err = pthread_cond_broadcast(&(p_tpool_ctx->active_tasks_cond));
         if (0 != err)
         {
             (void)pthread_mutex_unlock(&(p_tpool_ctx->active_tasks_mutex));
+            break;
+        }
+
+        err = pthread_mutex_unlock(&p_tpool_ctx->active_tasks_mutex);
+        if (0 != err)
+        {
             break;
         }
 

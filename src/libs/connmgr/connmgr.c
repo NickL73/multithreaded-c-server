@@ -206,9 +206,8 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
         goto destroy_recv_buf;
     }
 
-    p_conn->ref_count             = 0;
-    p_conn->b_marked_for_deletion = false;
-    p_conn->fd                    = fd;
+    p_conn->ref_count = 0;
+    p_conn->fd        = fd;
 
     p_conn->p_fd = NULL;
 
@@ -243,101 +242,6 @@ destroy_mutex:
 destroy_conn_ctx:
     free(p_conn);
     p_conn = NULL;
-
-end:
-    return res;
-}
-
-int connmgr_check_active_connection(conn_ctx_t * p_ctx)
-{
-    int  res      = -1;
-    bool b_marked = false;
-    if (NULL == p_ctx)
-    {
-        LOG_ERROR("Invalid argument");
-        goto end;
-    }
-
-    res = pthread_mutex_lock(&(p_ctx->mutex));
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to lock mutex");
-        goto end;
-    }
-
-    b_marked = p_ctx->b_marked_for_deletion;
-
-    res = pthread_mutex_unlock(&(p_ctx->mutex));
-    if (0 == res)
-    {
-        /* Basically inverting the boolean so this function returns > 0 if it is NOT marked for deletion */
-        res = b_marked ? 0 : 1;
-    }
-
-end:
-    return res;
-}
-
-int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx)
-{
-    int res       = -1;
-    int ref_count = 0;
-
-    if (NULL == p_mgr)
-    {
-        LOG_ERROR("Invalid argument");
-        goto end;
-    }
-
-    conn_ctx_t * p_conn = (conn_ctx_t *)(p_mgr->p_conns->pp_buf[conn_idx]);
-
-    res = pthread_mutex_lock(&p_conn->mutex);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to lock mutex");
-        goto end;
-    }
-
-    if (!(p_conn->b_marked_for_deletion))
-    {
-        LOG_ERROR("Connection is not marked for deletion! This should be treated as fatal. Logic is broken.");
-        (void)pthread_mutex_unlock(&p_conn->mutex);
-        res = -1;
-        goto end;
-    }
-
-    ref_count = p_conn->ref_count;
-
-    res = pthread_mutex_unlock(&p_conn->mutex);
-    if (0 != res)
-    {
-        LOG_ERROR("Failed to unlock mutex");
-        goto end;
-    }
-
-    if (0 < ref_count)
-    {
-        LOG_INFO("Task pool still has references to this client. Will try to delete again later.");
-    }
-
-    else
-    {
-        LOG_INFO("Connection is not referenced by any task in pool. Deleting.");
-        close(p_conn->fd);
-        p_conn->fd = 0;
-
-        free(p_conn->p_recv_buf);
-        p_conn->p_recv_buf = NULL;
-        free(p_conn->p_send_buf);
-        p_conn->p_send_buf = NULL;
-
-        (void)pthread_mutex_destroy(&p_conn->mutex);
-        free(p_conn);
-
-        /* Remove connection from the conn_mgr arrays by setting sentinel values to get cleaned up */
-        p_mgr->p_conns->pp_buf[conn_idx] = NULL;
-        memset(p_mgr->p_pfds + conn_idx, 0, sizeof(struct pollfd));
-    }
 
 end:
     return res;
@@ -449,8 +353,9 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
         {
             if (write_idx != read_idx)
             {
-                p_mgr->p_pfds[write_idx]   = p_mgr->p_pfds[read_idx];
-                p_mgr->p_pfds[read_idx].fd = 0;
+                memcpy(p_mgr->p_pfds + write_idx, p_mgr->p_pfds + read_idx, sizeof(struct pollfd));
+                // p_tmp->p_fd = p_mgr->p_pfds + write_idx;
+                memset(p_mgr->p_pfds + read_idx, 0, sizeof(struct pollfd));
             }
             write_idx++;
         }
@@ -459,18 +364,19 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
     p_mgr->num_active_conns = write_idx;
 
     /* Have to reset the pointers to pollfd array in each context after shuffling */
-    for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
-    {
-        res = ezarr_get_at(p_mgr->p_conns, idx, (void **)&p_conn);
-        if (0 != res)
-        {
-            LOG_ERROR("Failed to get connection at index %d", idx);
-            goto end;
-        }
-
-        p_conn->p_fd = p_mgr->p_pfds + idx;
-        p_conn       = NULL;
-    }
+    // for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
+    // {
+    //     res = ezarr_get_at(p_mgr->p_conns, idx, (void **)&p_conn);
+    //     if (0 != res)
+    //     {
+    //         LOG_ERROR("Failed to get connection at index %d", idx);
+    //         goto end;
+    //     }
+    //     pthread_mutex_lock(&p_conn->mutex);
+    //     p_conn->p_fd = p_mgr->p_pfds + idx;
+    //     pthread_mutex_unlock(&p_conn->mutex);
+    //     p_conn = NULL;
+    // }
 
     res = 0;
 

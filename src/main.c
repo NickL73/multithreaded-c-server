@@ -84,16 +84,74 @@ int main(void)
         goto cleanup_connections;
     }
 
-    err = connmgr_update_connections(&conn_mgr);
-    if (0 != err)
-    {
-        LOG_FATAL("Failed to update connection manager for listener.");
-        // TODO: Is this the right action? I'm not sure yet.
-        goto cleanup_connections;
-    }
-
     while (!g_should_shutdown)
     {
+        for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
+        {
+            err = ezarr_get_at(conn_mgr.p_conns, conn, (void **)&p_cur_ctx);
+            if (0 != err)
+            {
+                LOG_FATAL("Failed to get connection context");
+                goto cleanup_connections;
+            }
+
+            err = pthread_mutex_lock(&(p_cur_ctx->mutex));
+            if (0 != err)
+            {
+                LOG_ERROR("Failed to lock mutex when updating events");
+                continue;
+            }
+
+            switch (p_cur_ctx->state)
+            {
+                case READ_HEADER:
+                case READ_CONTENT:
+                    conn_mgr.p_pfds[conn].events = POLLIN | POLLHUP | POLLERR | POLLNVAL;
+                    break;
+                case WRITE_RESPONSE:
+                    conn_mgr.p_pfds[conn].events = POLLOUT | POLLHUP | POLLERR | POLLNVAL;
+                    break;
+                case PENDING_CLOSE:
+                    if (0 == p_cur_ctx->ref_count)
+                    {
+                        close(p_cur_ctx->fd);
+                        p_cur_ctx->fd = -1;
+                        free(p_cur_ctx->p_recv_buf);
+                        p_cur_ctx->p_recv_buf = NULL;
+                        free(p_cur_ctx->p_send_buf);
+                        p_cur_ctx->p_send_buf = NULL;
+                        (void)pthread_mutex_unlock(&(p_cur_ctx->mutex));
+                        (void)pthread_mutex_destroy(&(p_cur_ctx->mutex));
+                        free(p_cur_ctx);
+
+                        err = ezarr_set_at(conn_mgr.p_conns, conn, NULL);
+                        memset(conn_mgr.p_pfds + conn, 0, sizeof(struct pollfd));
+
+                        p_cur_ctx = NULL;
+                        continue;
+                    }
+                default:
+                    conn_mgr.p_pfds[conn].events = 0;
+                    break;
+            }
+
+            err = pthread_mutex_unlock(&(p_cur_ctx->mutex));
+            if (0 != err)
+            {
+                LOG_ERROR("Failed to unlock mutex after updating events");
+            }
+
+            p_cur_ctx = NULL;
+        }
+
+        LOG_INFO("Updating connections.");
+        err = connmgr_update_connections(&conn_mgr);
+        if (0 != err)
+        {
+            LOG_FATAL("Failed to update connection manager for listener.");
+            goto cleanup_connections;
+        }
+
         LOG_INFO("Polling connections for activity.");
         err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1);
         if (-1 == err)
@@ -113,31 +171,7 @@ int main(void)
             if (0 != err)
             {
                 LOG_FATAL("Failed to get connection context");
-                goto destroy_connmgr;
-            }
-
-            /* Check if the connection has been marked for deletion before tasking anything to the threadpool */
-            LOG_INFO("Checking status of connection.");
-            err = connmgr_check_active_connection((conn_ctx_t *)(conn_mgr.p_conns->pp_buf[conn]));
-            if (-1 == err)
-            {
-                LOG_FATAL("Failed to check active connection");
-                goto destroy_connmgr;
-            }
-
-            /* Client connection is no longer active, if no more references free resources and set sentinel values  */
-            if (0 == err)
-            {
-                LOG_INFO("Connection no longer active. Will attempt to remove.");
-                err = connmgr_attempt_deletion(&conn_mgr, conn);
-                if (-1 == err)
-                {
-                    LOG_FATAL("Failed to attempt deletion");
-                    goto destroy_connmgr;
-                }
-
-                /* Nothing else to do for a connection pending deletion so move on */
-                continue;
+                goto cleanup_connections;
             }
 
             if (conn_mgr.p_pfds[conn].revents & POLLIN)
@@ -150,7 +184,7 @@ int main(void)
                     if (-1 == err)
                     {
                         LOG_ERROR("Failed to accept new connections");
-                        goto destroy_connmgr;
+                        goto cleanup_connections;
                     }
                 }
 
@@ -186,16 +220,18 @@ int main(void)
                 if (0 != err)
                 {
                     LOG_FATAL("Failed to lock mutex on dead connection.");
-                    goto destroy_connmgr;
+                    goto cleanup_connections;
                 }
 
-                p_cur_ctx->b_marked_for_deletion = true;
+                close(p_cur_ctx->fd);
+                p_cur_ctx->fd    = -1;
+                p_cur_ctx->state = PENDING_CLOSE;
 
                 err = pthread_mutex_unlock(&(p_cur_ctx->mutex));
                 if (0 != err)
                 {
                     LOG_FATAL("Failed to unlock mutex on dead connection.");
-                    goto destroy_connmgr;
+                    goto cleanup_connections;
                 }
             }
 
@@ -222,16 +258,8 @@ int main(void)
                     LOG_ERROR("Failed to unlock mutex");
                 }
             }
+            p_cur_ctx = NULL;
         }
-
-        err = connmgr_update_connections(&conn_mgr);
-        if (0 != err)
-        {
-            LOG_FATAL("Failed to update connections");
-            break;
-        }
-
-        p_cur_ctx = NULL;
     }
 
     LOG_INFO("Exiting cleanly from the main loop.");
@@ -302,7 +330,7 @@ static void coin_io_read(void * p_arg)
         LOG_ERROR("Failed to lock mutex for I/O");
     }
 
-    if (!p_ctx->b_marked_for_deletion && !g_should_shutdown)
+    if ((p_ctx->state != PENDING_CLOSE) && !g_should_shutdown)
     {
         err = nl_handle_sock_data_in(p_ctx);
         if (0 != err)
@@ -332,7 +360,7 @@ static void coin_io_send(void * p_arg)
         LOG_ERROR("Failed to lock mutex for I/O");
     }
 
-    if (!p_ctx->b_marked_for_deletion && !g_should_shutdown)
+    if ((p_ctx->state != PENDING_CLOSE) && !g_should_shutdown)
     {
         err = nl_handle_sock_data_out(p_ctx);
         if (0 != err)

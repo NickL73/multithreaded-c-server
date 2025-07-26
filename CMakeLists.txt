@@ -6,8 +6,12 @@ set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-Wall -Wextra -Wconversion -Wconversion -pedantic -g)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -g -O1")
-set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=thread")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -g")
+#set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=thread")
+
+#set(SANITIZER_FLAGS -fsanitize=undefined,thread -fno-omit-frame-pointer)
+#add_compile_options(${SANITIZER_FLAGS})
+#add_link_options(${SANITIZER_FLAGS})
 
 set(PROJECT_INSTALL_PATH ${PROJECT_SOURCE_DIR}/bin)
 add_subdirectory(src)

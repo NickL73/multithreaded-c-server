@@ -231,9 +231,7 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
             {
                 p_ctx->bytes_to_send = 0;
                 p_ctx->bytes_sent    = 0;
-                memset(p_ctx->p_send_buf, 0, IO_BUF_SIZE);
 
-                p_ctx->p_fd->events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
                 p_ctx->state         = READ_HEADER;
                 p_ctx->bytes_to_read = HEADER_SIZE;
                 memset(p_ctx->p_send_buf, 0, IO_BUF_SIZE);
@@ -242,13 +240,13 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
             break;
         case NL_IO_EWOULDBLOCK:
             LOG_INFO("Connection on fd %d would block. Will poll again when ready.", p_ctx->fd);
-            p_ctx->bytes_to_send -= bytes_sent;
-            p_ctx->bytes_sent += bytes_sent;
             res = 0;
             break;
         case NL_SEND_ERR:
             LOG_ERROR("Failed to write to socket on fd %d.", p_ctx->fd);
-            p_ctx->b_marked_for_deletion = true; // TODO: This might be a touch aggressive. But SIGPIPE seemed to happen
+            p_ctx->state = PENDING_CLOSE; // TODO: This might be a touch aggressive. But SIGPIPE seemed to happen
+            close(p_ctx->fd);
+            p_ctx->fd = -1;
             break;
         default:
             LOG_ERROR("Unknown error writing to socket on fd %d.", p_ctx->fd);
@@ -384,8 +382,10 @@ static int read_header(conn_ctx_t * p_ctx)
             break;
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
-            p_ctx->b_marked_for_deletion = true;
-            res                          = 0;
+            p_ctx->state = PENDING_CLOSE;
+            close(p_ctx->fd);
+            p_ctx->fd = -1;
+            res       = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);
@@ -399,17 +399,13 @@ static int read_content(conn_ctx_t * p_ctx)
 {
     assert(NULL != p_ctx);
 
-    int    res        = -1;
-    size_t bytes_read = 0;
-    LOG_DEBUG("TO READ: %lu -- READ: %lu", p_ctx->bytes_to_read, p_ctx->bytes_read);
+    int               res        = -1;
+    size_t            bytes_read = 0;
     nl_internal_err_t err =
       nl_recvall(p_ctx->fd, (p_ctx->p_recv_buf + p_ctx->bytes_read), p_ctx->bytes_to_read, &bytes_read);
 
     p_ctx->bytes_read += bytes_read;
     p_ctx->bytes_to_read -= bytes_read;
-
-    LOG_DEBUG("Received %lu bytes total from socket on fd %d. %lu bytes remaining.", p_ctx->bytes_read, p_ctx->fd,
-              p_ctx->bytes_to_read);
 
     switch (err)
     {
@@ -424,7 +420,6 @@ static int read_content(conn_ctx_t * p_ctx)
                 p_ctx->bytes_to_read = 0;
                 p_ctx->bytes_read    = 0;
                 p_ctx->state         = WRITE_RESPONSE;
-                p_ctx->p_fd->events  = (POLLOUT | POLLHUP | POLLERR | POLLNVAL);
                 memset(p_ctx->p_recv_buf, 0, IO_BUF_SIZE);
             }
             res = 0;
@@ -438,8 +433,10 @@ static int read_content(conn_ctx_t * p_ctx)
             break;
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
-            p_ctx->b_marked_for_deletion = true;
-            res                          = 0;
+            p_ctx->state = PENDING_CLOSE;
+            close(p_ctx->fd);
+            p_ctx->fd = -1;
+            res       = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);

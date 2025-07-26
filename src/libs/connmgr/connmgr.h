@@ -19,7 +19,6 @@ typedef struct conn_ctx
 {
     pthread_mutex_t         mutex;
     int                     ref_count;
-    bool                    b_marked_for_deletion;
     int                     fd;
     struct sockaddr_storage addr;
 
@@ -38,6 +37,7 @@ typedef struct conn_ctx
         READ_HEADER,
         READ_CONTENT,
         WRITE_RESPONSE,
+        PENDING_CLOSE
     } state;
 
 } conn_ctx_t;
@@ -56,9 +56,6 @@ int connmgr_deinit(conn_mgr_t * p_mgr);
 int connmgr_destroy_all_conns(conn_mgr_t * p_mgr);
 
 int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
-
-int connmgr_check_active_connection(conn_ctx_t * p_ctx);
-int connmgr_attempt_deletion(conn_mgr_t * p_mgr, uint16_t conn_idx);
 
 int connmgr_update_connections(conn_mgr_t * p_mgr);
 
