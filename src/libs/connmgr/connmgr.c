@@ -149,12 +149,7 @@ int connmgr_destroy_all_conns(conn_mgr_t * p_mgr)
             continue;
         }
 
-        res = connmgr_destroy_conn(p_conn);
-        if (0 != res)
-        {
-            LOG_ERROR("Failed to destroy connection at index %d", idx);
-            continue;
-        }
+        connmgr_destroy_conn(p_conn);
 
         res = ezarr_set_at(p_mgr->p_conns, idx, NULL);
         if (0 != res)
@@ -269,14 +264,13 @@ end:
     return res;
 }
 
-int connmgr_destroy_conn(conn_ctx_t * p_conn)
+void connmgr_destroy_conn(void * p_arg)
 {
-    int res = -1;
-
+    conn_ctx_t * p_conn = (conn_ctx_t *)p_arg;
     if (NULL == p_conn)
     {
         LOG_ERROR("Invalid argument");
-        goto end;
+        return;
     }
 
     close(p_conn->fd);
@@ -293,11 +287,6 @@ int connmgr_destroy_conn(conn_ctx_t * p_conn)
     }
 
     free(p_conn);
-
-    res = 0;
-
-end:
-    return res;
 }
 
 int connmgr_update_connections(conn_mgr_t * p_mgr)

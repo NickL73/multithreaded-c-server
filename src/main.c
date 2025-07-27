@@ -162,12 +162,7 @@ int main(void)
             {
                 LOG_INFO("Connection on fd %d is PENDING CLOSE and will be deleted.", p_cur_ctx->fd);
 
-                err = connmgr_destroy_conn(p_cur_ctx);
-                if (0 != err)
-                {
-                    LOG_ERROR("Failed to destroy connection context");
-                    continue;
-                }
+                connmgr_destroy_conn(p_cur_ctx);
 
                 err = ezarr_set_at(conn_mgr.p_conns, conn, NULL);
                 if (0 == err)
@@ -183,8 +178,6 @@ int main(void)
             }
 
             p_cur_ctx = NULL;
-            cur_refs  = -1;
-            cur_state = -1;
         }
 
         LOG_INFO("Updating connections.");
@@ -327,10 +320,10 @@ destroy_connmgr:
     (void)connmgr_deinit(&conn_mgr);
 
 join_sig_thread:
-    /* If exiting for non-signal reasons, need to tell the signal thread to break its loop - just send it sigterm */
+    /* If exiting for non-signal reasons, need to tell the signal thread to break its loop - just send it a signal */
     if (0 == g_should_shutdown)
     {
-        (void)pthread_kill(sig_thread, SIGTERM);
+        (void)pthread_kill(sig_thread, SIGUSR1);
     }
     (void)pthread_join(sig_thread, NULL);
 
@@ -422,6 +415,12 @@ void * signal_thread_fn(void * p_args)
 
             // Wake up poll() in the main thread
             write(sigpipe_fd, &byte, sizeof(byte));
+            break;
+        }
+
+        else if (SIGUSR1 == signal)
+        {
+            LOG_INFO("Received SIGUSR1. Breaking loop.");
             break;
         }
     }

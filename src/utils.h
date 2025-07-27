@@ -39,7 +39,7 @@ typedef enum
 
 // Set a default maximum logging level if one wasn't defined at compilation
 #ifndef LOG_LEVEL
-#define LOG_LEVEL LOG_DEBUG + 10
+#define LOG_LEVEL LOG_DEBUG
 #endif // LOG_LEVEL
 
 #define LOG_MSG(level, ...)                                                                                        \
