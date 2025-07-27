@@ -223,6 +223,7 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
     err = nl_sendall(p_ctx->fd, p_ctx->p_send_buf, p_ctx->bytes_to_send, &bytes_sent);
     p_ctx->bytes_to_send -= bytes_sent;
     p_ctx->bytes_sent += bytes_sent;
+    LOG_DEBUG("Sent %lu bytes to socket on fd %d", bytes_sent, p_ctx->fd);
     switch (err)
     {
         case NL_IO_SUCCESS:
@@ -383,9 +384,9 @@ static int read_header(conn_ctx_t * p_ctx)
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
             p_ctx->state = PENDING_CLOSE;
-            close(p_ctx->fd);
-            p_ctx->fd = -1;
-            res       = 0;
+            // close(p_ctx->fd);
+            // p_ctx->fd = -1;
+            res = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);
@@ -413,7 +414,6 @@ static int read_content(conn_ctx_t * p_ctx)
             if (0 == p_ctx->bytes_to_read)
             {
                 LOG_INFO("Received all content for message. Will send response.");
-                // TODO: More intelligent response generation based on type
                 (void)proto_pingpong_create_response(p_ctx->p_recv_buf, p_ctx->p_send_buf, p_ctx->bytes_read,
                                                      (uint16_t *)&p_ctx->bytes_to_send);
 
@@ -434,9 +434,9 @@ static int read_content(conn_ctx_t * p_ctx)
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
             p_ctx->state = PENDING_CLOSE;
-            close(p_ctx->fd);
-            p_ctx->fd = -1;
-            res       = 0;
+            // close(p_ctx->fd);
+            // p_ctx->fd = -1;
+            res = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);

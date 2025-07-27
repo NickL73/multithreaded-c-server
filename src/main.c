@@ -104,16 +104,22 @@ int main(void)
 
             switch (p_cur_ctx->state)
             {
+                LOG_DEBUG("Client on fd %d at state %d", p_cur_ctx->fd, p_cur_ctx->state);
                 case READ_HEADER:
                 case READ_CONTENT:
-                    conn_mgr.p_pfds[conn].events = POLLIN | POLLHUP | POLLERR | POLLNVAL;
+                    LOG_DEBUG("Setting events for fd %d to POLLIN | POLLHUP | POLLERR | POLLNVAL", p_cur_ctx->fd);
+                    conn_mgr.p_pfds[conn].events = POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL;
                     break;
                 case WRITE_RESPONSE:
-                    conn_mgr.p_pfds[conn].events = POLLOUT | POLLHUP | POLLERR | POLLNVAL;
+                    LOG_DEBUG("Setting events for fd %d to POLLOUT | POLLHUP | POLLERR | POLLNVAL", p_cur_ctx->fd);
+                    conn_mgr.p_pfds[conn].events = POLLOUT | POLLIN | POLLHUP | POLLERR | POLLNVAL;
                     break;
                 case PENDING_CLOSE:
+                    LOG_DEBUG("Conn %d is PENDING CLOSE. Trying to delete", conn);
+                    conn_mgr.p_pfds[conn].fd = -1;
                     if (0 == p_cur_ctx->ref_count)
                     {
+                        LOG_DEBUG("Deleting.");
                         close(p_cur_ctx->fd);
                         p_cur_ctx->fd = -1;
                         free(p_cur_ctx->p_recv_buf);
@@ -130,6 +136,7 @@ int main(void)
                         p_cur_ctx = NULL;
                         continue;
                     }
+                    break;
                 default:
                     conn_mgr.p_pfds[conn].events = 0;
                     break;
@@ -153,7 +160,7 @@ int main(void)
         }
 
         LOG_INFO("Polling connections for activity.");
-        err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1);
+        err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1); // 15000);
         if (-1 == err)
         {
             LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
@@ -163,6 +170,12 @@ int main(void)
             }
 
             break;
+        }
+
+        if (0 == err)
+        {
+            LOG_INFO("Poll timed out, going to recycle to cleanup connections as required.");
+            continue;
         }
 
         for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
@@ -330,13 +343,18 @@ static void coin_io_read(void * p_arg)
         LOG_ERROR("Failed to lock mutex for I/O");
     }
 
-    if ((p_ctx->state != PENDING_CLOSE) && !g_should_shutdown)
+    if ((p_ctx->state != PENDING_CLOSE) && (p_ctx->state != WRITE_RESPONSE) && !g_should_shutdown)
     {
         err = nl_handle_sock_data_in(p_ctx);
         if (0 != err)
         {
             LOG_ERROR("Failed to read data on fd %d", p_ctx->fd);
         }
+    }
+
+    else
+    {
+        LOG_INFO("Socket state not ready for reading.");
     }
 
     p_ctx->ref_count -= 1;
@@ -360,13 +378,18 @@ static void coin_io_send(void * p_arg)
         LOG_ERROR("Failed to lock mutex for I/O");
     }
 
-    if ((p_ctx->state != PENDING_CLOSE) && !g_should_shutdown)
+    if ((p_ctx->state == WRITE_RESPONSE) && !g_should_shutdown)
     {
         err = nl_handle_sock_data_out(p_ctx);
         if (0 != err)
         {
             LOG_ERROR("Failed to read data on fd %d", p_ctx->fd);
         }
+    }
+
+    else
+    {
+        LOG_INFO("Socket state not ready for writing.");
     }
 
     p_ctx->ref_count -= 1;

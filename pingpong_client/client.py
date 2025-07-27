@@ -32,7 +32,7 @@ def parse_pong(data: bytes):
     return msg_type, msg_len, msg_volley, msg_payload
 
 
-def main(host: str, port: int, max_volleys: int, jitter: bool = False):
+def main(id: int, host: str, port: int, max_volleys: int, jitter: bool = False):
     if max_volleys >= 128:
         raise ValueError("Maximum volleys must be less than 128")
 
@@ -42,10 +42,11 @@ def main(host: str, port: int, max_volleys: int, jitter: bool = False):
         sock.settimeout(500)
 
         volley = 0
-        for v in range(max_volleys):
+        while volley < max_volleys:
             if jitter:
                 time.sleep(random.uniform(0.0, 0.05))
             ping_msg = make_ping(volley)
+
             sock.sendall(ping_msg)
             sent_msg_count += 1
 
@@ -53,6 +54,7 @@ def main(host: str, port: int, max_volleys: int, jitter: bool = False):
                 data = sock.recv(struct.calcsize(TOTAL_FMT))
                 msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
                 if msg_type != PONG_TYPE or msg_payload != b'pong\0' or msg_volley != volley + 1:
+                    print(f"Client {id} failed message")
                     bad_msg_count += 1
                     continue
 
@@ -62,8 +64,7 @@ def main(host: str, port: int, max_volleys: int, jitter: bool = False):
                 print("Socket timed out")
                 break
 
-    print(f"Completed sending {sent_msg_count} messages. Bad message count: {bad_msg_count}")
-    return bad_msg_count
+    return id, bad_msg_count
 
 
 if __name__ == "__main__":
@@ -80,13 +81,15 @@ if __name__ == "__main__":
     now = time.time()
     with ThreadPoolExecutor(max_workers=args.clients) as executor:
         for i in range(args.clients):
-            future = executor.submit(main, args.host, args.port, random.randint(1, 127), args.client_jitter)
+            max_volleys = random.randint(1, 127)
+            future = executor.submit(main, i, args.host, args.port, max_volleys, args.client_jitter)
             futures.append(future)
             time.sleep(random.uniform(0.0, 1.0))
 
         for i, future in enumerate(as_completed(futures)):
             try:
-                failed_msgs += future.result()
+                c_id, failed_msgs = future.result()
+                print(f"Client {c_id} failed {failed_msgs} messages")
             except Exception as e:
                 print(f"Client {i} failed with exception: {e}")
                 failed_msgs += 1
@@ -94,4 +97,3 @@ if __name__ == "__main__":
 
     end = time.time()
     print(f"Total time: {end - now}")
-    print(f"Failed messages: {failed_msgs}")
