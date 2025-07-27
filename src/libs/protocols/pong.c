@@ -6,7 +6,6 @@
 
 #include "utils.h"
 
-#include <assert.h>
 #include <netinet/in.h>
 
 int proto_pingpong_create_response(unsigned char * p_in_buf, char * p_out_buf, uint16_t inbuf_len, uint16_t * p_out_len)

@@ -382,9 +382,8 @@ end:
 
 static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
 {
-    int          res       = -1;
-    int          write_idx = 0;
-    conn_ctx_t * p_conn    = NULL;
+    int res       = -1;
+    int write_idx = 0;
     if ((NULL == p_mgr) || (NULL == p_mgr->p_conns) || (NULL == p_mgr->p_pfds))
     {
         LOG_ERROR("Invalid argument");
@@ -406,7 +405,6 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
             if (write_idx != read_idx)
             {
                 memcpy(p_mgr->p_pfds + write_idx, p_mgr->p_pfds + read_idx, sizeof(struct pollfd));
-                // p_tmp->p_fd = p_mgr->p_pfds + write_idx;
                 memset(p_mgr->p_pfds + read_idx, 0, sizeof(struct pollfd));
             }
             write_idx++;

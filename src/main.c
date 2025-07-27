@@ -227,7 +227,7 @@ int main(void)
                 }
 
                 /* If the read end of the self pipe is ready for reading, it means we need to shut down */
-                else if (p_cur_ctx->fd == conn_mgr.p_pfds[conn].fd)
+                else if (p_cur_ctx->fd == sigpipe_fds[0])
                 {
                     LOG_INFO("Received data on self pipe. Shutting down.");
                     break;
