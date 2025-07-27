@@ -290,8 +290,9 @@ int connmgr_destroy_conn(conn_ctx_t * p_conn)
         p_conn->p_send_buf = NULL;
 
         (void)pthread_mutex_destroy(&p_conn->mutex);
-        free(p_conn);
     }
+
+    free(p_conn);
 
     res = 0;
 

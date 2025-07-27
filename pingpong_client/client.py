@@ -11,14 +11,14 @@ PING_TYPE = 0
 PONG_TYPE = 1
 PING_PONG_ERR = 2
 
-TOTAL_FMT = "!BHB5s"
+TOTAL_FMT = "!BHHB5s"
 HEADER_FMT = "!BH"
-PINGPONG_FMT = "!B5s"
+PINGPONG_FMT = "!HB5s"
 
 
-def make_ping(volley: int) -> bytes:
+def make_ping(id: int, volley: int) -> bytes:
     header: bytes = struct.pack(HEADER_FMT, PING_TYPE, struct.calcsize(PINGPONG_FMT))
-    payload: bytes = struct.pack(PINGPONG_FMT, volley, b"ping")
+    payload: bytes = struct.pack(PINGPONG_FMT, id, volley, b"ping")
 
     return header + payload
 
@@ -28,8 +28,8 @@ def parse_pong(data: bytes):
         print("Not enough data to parse")
         return None
 
-    msg_type, msg_len, msg_volley, msg_payload = struct.unpack(TOTAL_FMT, data)
-    return msg_type, msg_len, msg_volley, msg_payload
+    msg_type, msg_len, cli_id, msg_volley, msg_payload = struct.unpack(TOTAL_FMT, data)
+    return msg_type, msg_len, cli_id, msg_volley, msg_payload
 
 
 def main(id: int, host: str, port: int, max_volleys: int, jitter: bool = False):
@@ -44,15 +44,16 @@ def main(id: int, host: str, port: int, max_volleys: int, jitter: bool = False):
         while volley < max_volleys:
             if jitter:
                 time.sleep(random.uniform(0.0, 0.05))
-            ping_msg = make_ping(volley)
+            ping_msg = make_ping(id, volley)
 
             sock.sendall(ping_msg)
 
             try:
                 data = sock.recv(struct.calcsize(TOTAL_FMT))
-                msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
-                if msg_type != PONG_TYPE or msg_payload != b'pong\0' or msg_volley != volley + 1:
-                    print(f"Client {id} failed message")
+                msg_type, msg_len, cli_id, msg_volley, msg_payload = parse_pong(data)
+                if msg_type != PONG_TYPE or msg_payload != b'pong\0' or msg_volley != volley + 1 or cli_id != id:
+                    print(
+                        f"Client {id} failed message. Expected: {id} {volley + 1} pong\0. Received: {cli_id} {msg_volley} {msg_payload}")
                     break
 
                 volley = msg_volley + 1

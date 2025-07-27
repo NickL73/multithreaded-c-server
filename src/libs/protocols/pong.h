@@ -21,6 +21,7 @@ typedef struct __attribute__((packed)) ping_pong_t
 {
     uint8_t  type;
     uint16_t len;
+    uint16_t cli_id;
     uint8_t  volley;
     char     buf[PING_PONG_LEN];
 } ping_pong_t;
