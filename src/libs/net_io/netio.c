@@ -148,7 +148,7 @@ int nl_accept(const int fd, conn_mgr_t * p_mgr)
             goto end;
         }
 
-        err = connmgr_create_new_conn(clifd, p_mgr);
+        err = connmgr_create_new_conn(clifd, p_mgr, INBOUND_CONN);
         if (0 != err)
         {
             LOG_ERROR("Failed to create new connection context");

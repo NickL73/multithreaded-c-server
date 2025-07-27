@@ -149,24 +149,33 @@ int connmgr_destroy_all_conns(conn_mgr_t * p_mgr)
             continue;
         }
 
-        close(p_conn->fd);
-        p_conn->fd = 0;
+        res = connmgr_destroy_conn(p_conn);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to destroy connection at index %d", idx);
+            continue;
+        }
 
-        free(p_conn->p_recv_buf);
-        p_conn->p_recv_buf = NULL;
-        free(p_conn->p_send_buf);
-        p_conn->p_send_buf = NULL;
+        res = ezarr_set_at(p_mgr->p_conns, idx, NULL);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to set connection at index %d to NULL", idx);
+        }
 
-        (void)pthread_mutex_destroy(&p_conn->mutex);
-        free(p_conn);
         p_conn = NULL;
+    }
+
+    res = ezq_clear(p_mgr->p_new_conns, connmgr_destroy_conn);
+    if (0 != res)
+    {
+        LOG_ERROR("Failed to clear new connection queue");
     }
 
 end:
     return res;
 }
 
-int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
+int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr, conn_type_t type)
 {
     int          res    = -1;
     conn_ctx_t * p_conn = NULL;
@@ -185,39 +194,52 @@ int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr)
         goto end;
     }
 
-    res = pthread_mutex_init(&p_conn->mutex, NULL);
-    if (0 != res)
+    if (type == INBOUND_CONN)
     {
-        LOG_ERROR("Failed to initialize mutex");
-        goto destroy_conn_ctx;
+        LOG_INFO("Adding inbound connection.");
+        res = pthread_mutex_init(&p_conn->mutex, NULL);
+        if (0 != res)
+        {
+            LOG_ERROR("Failed to initialize mutex");
+            goto destroy_conn_ctx;
+        }
+
+        p_conn->p_recv_buf = malloc(IO_BUF_SIZE * sizeof(unsigned char));
+        if (NULL == p_conn->p_recv_buf)
+        {
+            LOG_ERROR("Failed to allocate memory for recv buffer");
+            goto destroy_mutex;
+        }
+
+        p_conn->p_send_buf = malloc(IO_BUF_SIZE * sizeof(char));
+        if (NULL == p_conn->p_send_buf)
+        {
+            LOG_ERROR("Failed to allocate memory for send buffer");
+            goto destroy_recv_buf;
+        }
+
+        p_conn->ref_count = 0;
+        p_conn->fd        = fd;
+
+        p_conn->bytes_read    = 0;
+        p_conn->bytes_to_read = HEADER_SIZE;
+
+        p_conn->bytes_sent    = 0;
+        p_conn->bytes_to_send = 0;
+
+        p_conn->state = READ_HEADER;
     }
 
-    p_conn->p_recv_buf = malloc(IO_BUF_SIZE * sizeof(unsigned char));
-    if (NULL == p_conn->p_recv_buf)
+    else
     {
-        LOG_ERROR("Failed to allocate memory for recv buffer");
-        goto destroy_mutex;
+        LOG_INFO("Adding internal connection.");
+        p_conn->state     = SPECIAL_CONN;
+        p_conn->fd        = fd;
+        p_conn->ref_count = 0;
     }
 
-    p_conn->p_send_buf = malloc(IO_BUF_SIZE * sizeof(char));
-    if (NULL == p_conn->p_send_buf)
-    {
-        LOG_ERROR("Failed to allocate memory for send buffer");
-        goto destroy_recv_buf;
-    }
-
-    p_conn->ref_count = 0;
-    p_conn->fd        = fd;
-
-    p_conn->p_fd = NULL;
-
-    p_conn->bytes_read    = 0;
-    p_conn->bytes_to_read = HEADER_SIZE;
-
-    p_conn->bytes_sent    = 0;
-    p_conn->bytes_to_send = 0;
-
-    p_conn->state = READ_HEADER;
+    /* Same for any connection type */
+    p_conn->type = type;
 
     res = ezq_enqueue(p_mgr->p_new_conns, p_conn);
     if (0 != res)
@@ -242,6 +264,36 @@ destroy_mutex:
 destroy_conn_ctx:
     free(p_conn);
     p_conn = NULL;
+
+end:
+    return res;
+}
+
+int connmgr_destroy_conn(conn_ctx_t * p_conn)
+{
+    int res = -1;
+
+    if (NULL == p_conn)
+    {
+        LOG_ERROR("Invalid argument");
+        goto end;
+    }
+
+    close(p_conn->fd);
+    p_conn->fd = 0;
+
+    if (INBOUND_CONN == p_conn->type)
+    {
+        free(p_conn->p_recv_buf);
+        p_conn->p_recv_buf = NULL;
+        free(p_conn->p_send_buf);
+        p_conn->p_send_buf = NULL;
+
+        (void)pthread_mutex_destroy(&p_conn->mutex);
+        free(p_conn);
+    }
+
+    res = 0;
 
 end:
     return res;
@@ -432,8 +484,6 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t 
     p_pfds[cur_size].fd      = p_ctx->fd;
     p_pfds[cur_size].events  = (POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL);
     p_pfds[cur_size].revents = 0;
-
-    p_ctx->p_fd = p_pfds + cur_size;
 
     res = 0;
 

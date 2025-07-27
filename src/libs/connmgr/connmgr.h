@@ -13,16 +13,20 @@
 #include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
-#include <stdbool.h>
+
+typedef enum conn_type
+{
+    INTERNAL_CONN,
+    INBOUND_CONN
+} conn_type_t;
 
 typedef struct conn_ctx
 {
+    conn_type_t             type;
     pthread_mutex_t         mutex;
     int                     ref_count;
     int                     fd;
     struct sockaddr_storage addr;
-
-    struct pollfd * p_fd;
 
     unsigned char * p_recv_buf;
     size_t          bytes_read;
@@ -37,7 +41,8 @@ typedef struct conn_ctx
         READ_HEADER,
         READ_CONTENT,
         WRITE_RESPONSE,
-        PENDING_CLOSE
+        PENDING_CLOSE,
+        SPECIAL_CONN // For the listener and self-pipe
     } state;
 
 } conn_ctx_t;
@@ -55,7 +60,8 @@ int connmgr_init(conn_mgr_t * p_mgr, uint16_t initial_max_conns);
 int connmgr_deinit(conn_mgr_t * p_mgr);
 int connmgr_destroy_all_conns(conn_mgr_t * p_mgr);
 
-int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr);
+int connmgr_create_new_conn(int fd, conn_mgr_t * p_mgr, conn_type_t type);
+int connmgr_destroy_conn(conn_ctx_t * p_conn);
 
 int connmgr_update_connections(conn_mgr_t * p_mgr);
 

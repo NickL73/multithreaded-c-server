@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -24,33 +25,57 @@
 #define NUM_THREADS       8
 volatile sig_atomic_t g_should_shutdown = 0;
 
+typedef struct sig_thread_args_t
+{
+    sigset_t * p_sigset;
+    int        sigpipe_fd;
+} sig_thread_args_t;
+
 /* STATIC FUNCTION DECLARATIONS */
-static void sighandler(int signum);
-static int  setup_signal_handlers(void);
+static int  setup_signal_handler_thread(pthread_t * p_thread, sig_thread_args_t * p_args);
+void *      signal_thread_fn(void * p_args);
 static void coin_io_read(void * p_arg);
 static void coin_io_send(void * p_arg);
 
 int main(void)
 {
-    int                 err       = 0;
-    int                 res       = -1;
-    int                 sfd       = -1;
+    int err = 0;
+    int res = -1;
+    int sfd = -1;
+
     coin_status_t       tp_status = COIN_GENERIC_FAILURE;
     coin_threadpool_t * p_tp      = NULL;
-    conn_mgr_t          conn_mgr  = {0};
-    conn_ctx_t *        p_cur_ctx = NULL;
-    int                 cur_refs  = -1;
-    int                 cur_state = -1;
 
-    // TODO: Start a single thread to handle signals
+    sigset_t          sigset     = {0};
+    pthread_t         sig_thread = {0};
+    int               sigpipe_fds[2]; // [0] = read end, [1] = write end
+    sig_thread_args_t sig_args = {0};
+
+    conn_mgr_t   conn_mgr  = {0};
+    conn_ctx_t * p_cur_ctx = NULL;
+    int          cur_refs  = -1;
+    int          cur_state = -1;
+
 
     /* Setup the signal handler to attempt a graceful shutdown on SIGINT and SIGTERM and ignore SIGPIPE */
-    LOG_INFO("Setting up signal handlers.");
-    err = setup_signal_handlers();
+    LOG_INFO("Setting up thread to handle SIGINT and SIGTERM.");
+    err = pipe(sigpipe_fds);
+    if (-1 == err)
+    {
+        LOG_FATAL("Failed to create pipe for signal handling");
+        goto end;
+    }
+
+    (void)fcntl(sigpipe_fds[0], F_SETFL, O_NONBLOCK);
+    (void)fcntl(sigpipe_fds[1], F_SETFL, O_NONBLOCK);
+
+    sig_args.p_sigset   = &sigset;
+    sig_args.sigpipe_fd = sigpipe_fds[1];
+    err                 = setup_signal_handler_thread(&sig_thread, &sig_args);
     if (0 != err)
     {
         LOG_FATAL("Failed to setup signal handlers");
-        goto end;
+        goto close_pipefds;
     }
 
     /* Setup the connection manager that will handle new and closed connections */
@@ -59,7 +84,7 @@ int main(void)
     if (0 != err)
     {
         LOG_FATAL("Failed to initialize connection manager");
-        goto end;
+        goto join_sig_thread;
     }
 
     /* Setup the threadpool that will handle the I/O for each connection */
@@ -79,14 +104,20 @@ int main(void)
         goto destroy_tpool;
     }
 
-    err = connmgr_create_new_conn(sfd, &conn_mgr);
+    /* Add the signal pipe fds and listening socket as new connections */
+    err = connmgr_create_new_conn(sfd, &conn_mgr, INTERNAL_CONN);
     if (0 != err)
     {
         LOG_FATAL("Failed to create connection structure for listener.");
         goto cleanup_connections;
     }
 
-    // TODO: Maybe free the listener's send/recv buffers? Small optimization but doesn't really need them
+    err = connmgr_create_new_conn(sigpipe_fds[0], &conn_mgr, INTERNAL_CONN);
+    if (0 != err)
+    {
+        LOG_FATAL("Failed to create connection structure for listener.");
+        goto cleanup_connections;
+    }
 
     while (!g_should_shutdown)
     {
@@ -98,6 +129,14 @@ int main(void)
             {
                 LOG_FATAL("Failed to get connection context");
                 goto cleanup_connections;
+            }
+
+            /* No need to lock here because this value is only ever set once and is then read-only. These connections
+             * only ever close at server shutdown, so there's little sense in checking them.
+             */
+            if (INTERNAL_CONN == p_cur_ctx->type)
+            {
+                continue;
             }
 
             /* Save off the context's state and reference count */
@@ -122,19 +161,13 @@ int main(void)
             if ((cur_state == PENDING_CLOSE) && (0 == cur_refs))
             {
                 LOG_INFO("Connection on fd %d is PENDING CLOSE and will be deleted.", p_cur_ctx->fd);
-                close(p_cur_ctx->fd);
-                p_cur_ctx->fd            = -1;
-                conn_mgr.p_pfds[conn].fd = -1;
 
-                free(p_cur_ctx->p_recv_buf);
-                p_cur_ctx->p_recv_buf = NULL;
-
-                free(p_cur_ctx->p_send_buf);
-                p_cur_ctx->p_send_buf = NULL;
-
-                (void)pthread_mutex_destroy(&p_cur_ctx->mutex);
-
-                free(p_cur_ctx);
+                err = connmgr_destroy_conn(p_cur_ctx);
+                if (0 != err)
+                {
+                    LOG_ERROR("Failed to destroy connection context");
+                    continue;
+                }
 
                 err = ezarr_set_at(conn_mgr.p_conns, conn, NULL);
                 if (0 == err)
@@ -167,11 +200,6 @@ int main(void)
         if (-1 == err)
         {
             LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
-            if (EINTR == errno)
-            {
-                continue;
-            }
-
             break;
         }
 
@@ -196,6 +224,13 @@ int main(void)
                         LOG_ERROR("Failed to accept new connections");
                         goto cleanup_connections;
                     }
+                }
+
+                /* If the read end of the self pipe is ready for reading, it means we need to shut down */
+                else if (p_cur_ctx->fd == conn_mgr.p_pfds[conn].fd)
+                {
+                    LOG_INFO("Received data on self pipe. Shutting down.");
+                    break;
                 }
 
                 else
@@ -233,8 +268,6 @@ int main(void)
                     goto cleanup_connections;
                 }
 
-                close(p_cur_ctx->fd);
-                p_cur_ctx->fd    = -1;
                 p_cur_ctx->state = PENDING_CLOSE;
 
                 err = pthread_mutex_unlock(&(p_cur_ctx->mutex));
@@ -293,39 +326,107 @@ destroy_tpool:
 destroy_connmgr:
     (void)connmgr_deinit(&conn_mgr);
 
+join_sig_thread:
+    /* If exiting for non-signal reasons, need to tell the signal thread to break its loop - just send it sigterm */
+    if (0 == g_should_shutdown)
+    {
+        (void)pthread_kill(sig_thread, SIGTERM);
+    }
+    (void)pthread_join(sig_thread, NULL);
+
+close_pipefds:
+    (void)close(sigpipe_fds[0]);
+    (void)close(sigpipe_fds[1]);
+
 end:
     return res;
 }
 
 /* STATIC FUNCTION DEFINITIONS */
-static void sighandler(int signum)
+static int setup_signal_handler_thread(pthread_t * p_thread, sig_thread_args_t * p_args)
 {
-    (void)signum;
-    g_should_shutdown = 1;
-}
+    assert(NULL != p_thread);
+    assert(NULL != p_args);
 
-static int setup_signal_handlers(void)
-{
-    int              res = -1;
-    struct sigaction sa  = {0};
-    sa.sa_handler        = sighandler;
-    sa.sa_flags          = SA_RESTART;
-    if (0 != sigemptyset(&sa.sa_mask))
+    int err = -1;
+
+    err = sigemptyset(p_args->p_sigset);
+    if (0 != err)
     {
         LOG_ERROR("Failed to empty signal set");
-        return res;
+        return err;
     }
 
-    if ((0 != sigaction(SIGINT, &sa, NULL)) || (0 != sigaction(SIGTERM, &sa, NULL)))
+    err = sigaddset(p_args->p_sigset, SIGPIPE);
+    if (0 != err)
     {
-        LOG_ERROR("Failed to set sigaction on SIGINT or SIGTERM");
-        return res;
+        LOG_ERROR("Failed to add SIGPIPE to signal set");
+        return err;
     }
 
-    /* Don't let SIGPIPE break the server either, just ignore it */
-    (void)signal(SIGPIPE, SIG_IGN);
-    res = 0;
-    return res;
+    err = sigaddset(p_args->p_sigset, SIGINT);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to add SIGINT to signal set");
+        return err;
+    }
+
+    err = sigaddset(p_args->p_sigset, SIGTERM);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to add SIGTERM to signal set");
+        return err;
+    }
+
+    err = pthread_sigmask(SIG_BLOCK, p_args->p_sigset, NULL);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to block signals for business threads.");
+        return err;
+    }
+
+    err = pthread_create(p_thread, NULL, signal_thread_fn, p_args);
+    if (0 != err)
+    {
+        LOG_ERROR("Failed to create signal thread.");
+        return err;
+    }
+
+    return 0;
+}
+
+void * signal_thread_fn(void * p_args)
+{
+    assert(NULL != p_args);
+    sig_thread_args_t * p_sig_args = (sig_thread_args_t *)(p_args);
+    sigset_t *          p_sigset   = (sigset_t *)(p_sig_args->p_sigset);
+    int                 sigpipe_fd = p_sig_args->sigpipe_fd;
+    int                 signal     = 0;
+    int                 err        = -1;
+
+    for (;;)
+    {
+        uint8_t byte = 1;
+
+        err = sigwait(p_sigset, &signal);
+        if (0 != err)
+        {
+            LOG_ERROR("Failed to wait for signal");
+            break;
+        }
+
+        if ((SIGINT == signal) || (SIGTERM == signal))
+        {
+            LOG_INFO("Received signal %d. Shutting down.", signal);
+            g_should_shutdown = 1;
+
+            // Wake up poll() in the main thread
+            write(sigpipe_fd, &byte, sizeof(byte));
+            break;
+        }
+    }
+
+    return NULL;
 }
 
 static void coin_io_read(void * p_arg)
@@ -340,7 +441,7 @@ static void coin_io_read(void * p_arg)
         LOG_ERROR("Failed to lock mutex for I/O");
     }
 
-    if ((p_ctx->state != PENDING_CLOSE) && (p_ctx->state != WRITE_RESPONSE) && !g_should_shutdown)
+    if (((p_ctx->state == READ_CONTENT) || (p_ctx->state == READ_HEADER)) && !g_should_shutdown)
     {
         err = nl_handle_sock_data_in(p_ctx);
         if (0 != err)
