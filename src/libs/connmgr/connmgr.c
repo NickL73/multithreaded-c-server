@@ -430,7 +430,7 @@ static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t 
     }
 
     p_pfds[cur_size].fd      = p_ctx->fd;
-    p_pfds[cur_size].events  = (POLLIN | POLLHUP | POLLERR | POLLNVAL);
+    p_pfds[cur_size].events  = (POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL);
     p_pfds[cur_size].revents = 0;
 
     p_ctx->p_fd = p_pfds + cur_size;

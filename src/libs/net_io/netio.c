@@ -246,8 +246,6 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
         case NL_SEND_ERR:
             LOG_ERROR("Failed to write to socket on fd %d.", p_ctx->fd);
             p_ctx->state = PENDING_CLOSE; // TODO: This might be a touch aggressive. But SIGPIPE seemed to happen
-            close(p_ctx->fd);
-            p_ctx->fd = -1;
             break;
         default:
             LOG_ERROR("Unknown error writing to socket on fd %d.", p_ctx->fd);
@@ -384,9 +382,7 @@ static int read_header(conn_ctx_t * p_ctx)
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
             p_ctx->state = PENDING_CLOSE;
-            // close(p_ctx->fd);
-            // p_ctx->fd = -1;
-            res = 0;
+            res          = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);
@@ -434,9 +430,7 @@ static int read_content(conn_ctx_t * p_ctx)
         case NL_IO_EOF:
             LOG_INFO("Connection on fd %d closed. Marking for deletion.", p_ctx->fd);
             p_ctx->state = PENDING_CLOSE;
-            // close(p_ctx->fd);
-            // p_ctx->fd = -1;
-            res = 0;
+            res          = 0;
             break;
         default:
             LOG_ERROR("Unknown error reading from socket on fd %d.", p_ctx->fd);

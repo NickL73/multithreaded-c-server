@@ -37,8 +37,10 @@ int main(void)
     int                 sfd       = -1;
     coin_status_t       tp_status = COIN_GENERIC_FAILURE;
     coin_threadpool_t * p_tp      = NULL;
-    conn_ctx_t *        p_cur_ctx = NULL;
     conn_mgr_t          conn_mgr  = {0};
+    conn_ctx_t *        p_cur_ctx = NULL;
+    int                 cur_refs  = -1;
+    int                 cur_state = -1;
 
     // TODO: Start a single thread to handle signals
 
@@ -68,7 +70,7 @@ int main(void)
         goto destroy_connmgr;
     }
 
-    /* Start the main server listening socket */
+    /* Start the main server listening socket and make its connection context */
     LOG_INFO("Starting listening socket.");
     sfd = nl_start_listener("127.0.0.1", "1337");
     if (-1 == sfd)
@@ -84,8 +86,11 @@ int main(void)
         goto cleanup_connections;
     }
 
+    // TODO: Maybe free the listener's send/recv buffers? Small optimization but doesn't really need them
+
     while (!g_should_shutdown)
     {
+        /* Update the connection manager to account for recently added connections and handle closing ones */
         for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)
         {
             err = ezarr_get_at(conn_mgr.p_conns, conn, (void **)&p_cur_ctx);
@@ -95,6 +100,7 @@ int main(void)
                 goto cleanup_connections;
             }
 
+            /* Save off the context's state and reference count */
             err = pthread_mutex_lock(&(p_cur_ctx->mutex));
             if (0 != err)
             {
@@ -102,53 +108,50 @@ int main(void)
                 continue;
             }
 
-            switch (p_cur_ctx->state)
-            {
-                LOG_DEBUG("Client on fd %d at state %d", p_cur_ctx->fd, p_cur_ctx->state);
-                case READ_HEADER:
-                case READ_CONTENT:
-                    LOG_DEBUG("Setting events for fd %d to POLLIN | POLLHUP | POLLERR | POLLNVAL", p_cur_ctx->fd);
-                    conn_mgr.p_pfds[conn].events = POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL;
-                    break;
-                case WRITE_RESPONSE:
-                    LOG_DEBUG("Setting events for fd %d to POLLOUT | POLLHUP | POLLERR | POLLNVAL", p_cur_ctx->fd);
-                    conn_mgr.p_pfds[conn].events = POLLOUT | POLLIN | POLLHUP | POLLERR | POLLNVAL;
-                    break;
-                case PENDING_CLOSE:
-                    LOG_DEBUG("Conn %d is PENDING CLOSE. Trying to delete", conn);
-                    conn_mgr.p_pfds[conn].fd = -1;
-                    if (0 == p_cur_ctx->ref_count)
-                    {
-                        LOG_DEBUG("Deleting.");
-                        close(p_cur_ctx->fd);
-                        p_cur_ctx->fd = -1;
-                        free(p_cur_ctx->p_recv_buf);
-                        p_cur_ctx->p_recv_buf = NULL;
-                        free(p_cur_ctx->p_send_buf);
-                        p_cur_ctx->p_send_buf = NULL;
-                        (void)pthread_mutex_unlock(&(p_cur_ctx->mutex));
-                        (void)pthread_mutex_destroy(&(p_cur_ctx->mutex));
-                        free(p_cur_ctx);
-
-                        err = ezarr_set_at(conn_mgr.p_conns, conn, NULL);
-                        memset(conn_mgr.p_pfds + conn, 0, sizeof(struct pollfd));
-
-                        p_cur_ctx = NULL;
-                        continue;
-                    }
-                    break;
-                default:
-                    conn_mgr.p_pfds[conn].events = 0;
-                    break;
-            }
+            cur_refs  = p_cur_ctx->ref_count;
+            cur_state = p_cur_ctx->state;
 
             err = pthread_mutex_unlock(&(p_cur_ctx->mutex));
             if (0 != err)
             {
                 LOG_ERROR("Failed to unlock mutex after updating events");
+                continue;
+            }
+
+            /* If no more threads have a reference to the connection and its ready to close, close it */
+            if ((cur_state == PENDING_CLOSE) && (0 == cur_refs))
+            {
+                LOG_INFO("Connection on fd %d is PENDING CLOSE and will be deleted.", p_cur_ctx->fd);
+                close(p_cur_ctx->fd);
+                p_cur_ctx->fd            = -1;
+                conn_mgr.p_pfds[conn].fd = -1;
+
+                free(p_cur_ctx->p_recv_buf);
+                p_cur_ctx->p_recv_buf = NULL;
+
+                free(p_cur_ctx->p_send_buf);
+                p_cur_ctx->p_send_buf = NULL;
+
+                (void)pthread_mutex_destroy(&p_cur_ctx->mutex);
+
+                free(p_cur_ctx);
+
+                err = ezarr_set_at(conn_mgr.p_conns, conn, NULL);
+                if (0 == err)
+                {
+                    /* Only set the p_fd sentinel value if p_conn set successful, otherwise they'll be out of sync */
+                    memset(conn_mgr.p_pfds + conn, 0, sizeof(struct pollfd));
+                }
+
+                else
+                {
+                    LOG_ERROR("Failed to set connection context to NULL. The array will have a stale entry.");
+                }
             }
 
             p_cur_ctx = NULL;
+            cur_refs  = -1;
+            cur_state = -1;
         }
 
         LOG_INFO("Updating connections.");
@@ -160,7 +163,7 @@ int main(void)
         }
 
         LOG_INFO("Polling connections for activity.");
-        err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1); // 15000);
+        err = poll(conn_mgr.p_pfds, conn_mgr.num_active_conns, -1);
         if (-1 == err)
         {
             LOG_ERROR("poll() failed with errno %d (%s)", errno, strerror(errno));
@@ -170,12 +173,6 @@ int main(void)
             }
 
             break;
-        }
-
-        if (0 == err)
-        {
-            LOG_INFO("Poll timed out, going to recycle to cleanup connections as required.");
-            continue;
         }
 
         for (uint16_t conn = 0; conn < conn_mgr.num_active_conns; conn++)

@@ -37,7 +37,6 @@ def main(id: int, host: str, port: int, max_volleys: int, jitter: bool = False):
         raise ValueError("Maximum volleys must be less than 128")
 
     bad_msg_count = 0
-    sent_msg_count = 0
     with socket.create_connection((host, port)) as sock:
         sock.settimeout(500)
 
@@ -48,22 +47,20 @@ def main(id: int, host: str, port: int, max_volleys: int, jitter: bool = False):
             ping_msg = make_ping(volley)
 
             sock.sendall(ping_msg)
-            sent_msg_count += 1
 
             try:
                 data = sock.recv(struct.calcsize(TOTAL_FMT))
                 msg_type, msg_len, msg_volley, msg_payload = parse_pong(data)
                 if msg_type != PONG_TYPE or msg_payload != b'pong\0' or msg_volley != volley + 1:
                     print(f"Client {id} failed message")
-                    bad_msg_count += 1
-                    continue
+                    break
 
                 volley = msg_volley + 1
 
             except socket.timeout:
                 print("Socket timed out")
                 break
-
+        print(f"Client {id} volleys: {volley}/{max_volleys}")
     return id, bad_msg_count
 
 
@@ -81,7 +78,7 @@ if __name__ == "__main__":
     now = time.time()
     with ThreadPoolExecutor(max_workers=args.clients) as executor:
         for i in range(args.clients):
-            max_volleys = random.randint(1, 127)
+            max_volleys = random.randrange(2, 127, 2)
             future = executor.submit(main, i, args.host, args.port, max_volleys, args.client_jitter)
             futures.append(future)
             time.sleep(random.uniform(0.0, 1.0))
@@ -89,7 +86,8 @@ if __name__ == "__main__":
         for i, future in enumerate(as_completed(futures)):
             try:
                 c_id, failed_msgs = future.result()
-                print(f"Client {c_id} failed {failed_msgs} messages")
+                if failed_msgs > 0:
+                    print(f"Client {c_id} failed {failed_msgs} messages")
             except Exception as e:
                 print(f"Client {i} failed with exception: {e}")
                 failed_msgs += 1
