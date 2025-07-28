@@ -4,7 +4,7 @@
 
 #include "ezarray.h"
 
-#include "utils.h"
+#include "common.h"
 
 #include <assert.h>
 #include <stdint.h>

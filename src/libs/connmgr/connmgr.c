@@ -7,7 +7,7 @@
 
 #include "connmgr.h"
 
-#include "utils.h"
+#include "common.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -402,23 +402,7 @@ static int connmgr_remove_closed_connections(conn_mgr_t * p_mgr)
     }
 
     p_mgr->num_active_conns = write_idx;
-
-    /* Have to reset the pointers to pollfd array in each context after shuffling */
-    // for (int idx = 0; idx < p_mgr->num_active_conns; idx++)
-    // {
-    //     res = ezarr_get_at(p_mgr->p_conns, idx, (void **)&p_conn);
-    //     if (0 != res)
-    //     {
-    //         LOG_ERROR("Failed to get connection at index %d", idx);
-    //         goto end;
-    //     }
-    //     pthread_mutex_lock(&p_conn->mutex);
-    //     p_conn->p_fd = p_mgr->p_pfds + idx;
-    //     pthread_mutex_unlock(&p_conn->mutex);
-    //     p_conn = NULL;
-    // }
-
-    res = 0;
+    res                     = 0;
 
 end:
     return res;

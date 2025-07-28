@@ -4,10 +4,10 @@
  * @date 7/11/25
  * @brief
  */
+#include "common.h"
 #include "concurinc.h"
 #include "connmgr.h"
 #include "netio.h"
-#include "utils.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -208,7 +208,6 @@ int main(void)
             if (conn_mgr.p_pfds[conn].revents & POLLIN)
             {
                 LOG_INFO("Received data on connection %d", conn);
-                // TODO: Check if we're at the maximum number of connections (this is really impractical)
                 if (sfd == conn_mgr.p_pfds[conn].fd)
                 {
                     err = nl_accept(conn_mgr.p_pfds[conn].fd, &conn_mgr);

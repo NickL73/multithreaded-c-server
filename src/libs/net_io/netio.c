@@ -4,9 +4,9 @@
 
 #include "netio.h"
 
+#include "common.h"
 #include "connmgr.h"
 #include "pong.h"
-#include "utils.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -133,6 +133,12 @@ int nl_accept(const int fd, conn_mgr_t * p_mgr)
 
     while (1)
     {
+        if (0 == (MAX_CONNECTIONS - p_mgr->num_active_conns - p_mgr->p_new_conns->num_items + 1))
+        {
+            LOG_WARN("Maximum number of connections reached. Will not accept any more connections.");
+            break;
+        }
+
         clifd = accept(fd, (struct sockaddr *)&addr, &addrlen);
         if (-1 == clifd)
         {
@@ -245,7 +251,6 @@ int nl_handle_sock_data_out(conn_ctx_t * p_ctx)
             break;
         case NL_SEND_ERR:
             LOG_ERROR("Failed to write to socket on fd %d.", p_ctx->fd);
-            p_ctx->state = PENDING_CLOSE; // TODO: This might be a touch aggressive. But SIGPIPE seemed to happen
             break;
         default:
             LOG_ERROR("Unknown error writing to socket on fd %d.", p_ctx->fd);
@@ -257,10 +262,6 @@ end:
 }
 
 /* STATIC FUNCTION DEFINITIONS */
-
-// T: 1 byte
-// L: 2 bytes
-// V: determined by L
 
 static nl_internal_err_t nl_sendall(int fd, const void * p_buf, size_t len, size_t * p_bytes_sent)
 {
@@ -365,10 +366,8 @@ static int read_header(conn_ctx_t * p_ctx)
                 incoming_len = ntohs(incoming_len);
 
                 LOG_INFO("Received header and expecting message of %lu bytes.", incoming_len);
-                // TODO: More intelligent saving of type and length
                 p_ctx->bytes_to_read = incoming_len;
-                LOG_DEBUG("Setting bytes_to_read to %lu", p_ctx->bytes_to_read);
-                p_ctx->state = READ_CONTENT;
+                p_ctx->state         = READ_CONTENT;
             }
             res = 0;
             break;

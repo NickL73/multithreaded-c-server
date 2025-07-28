@@ -9,6 +9,7 @@
 
 #define HEADER_SIZE 3
 #define IO_BUF_SIZE 1024
+#define MAX_CONNECTIONS 1024
 
 #ifdef NDEBUG
 #define LOG_MSG(level, ...) ((void)0)
