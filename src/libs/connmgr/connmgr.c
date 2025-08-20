@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static int add_to_pollfd(conn_ctx_t * p_ctx, struct pollfd ** pp_pfds, uint16_t cur_size, uint16_t max_size);

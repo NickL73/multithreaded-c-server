@@ -100,7 +100,7 @@ int ezarr_set_at(ezarray_t * p_ezarray, uint16_t idx, void * p_item)
         goto end;
     }
 
-    if (idx >= p_ezarray->max_items)
+    if (idx >= p_ezarray->num_items)
     {
         LOG_ERROR("Index out of bounds");
         goto end;
