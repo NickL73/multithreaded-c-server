@@ -35,8 +35,8 @@ typedef struct sig_thread_args_t
 /* STATIC FUNCTION DECLARATIONS */
 static int  setup_signal_handler_thread(pthread_t * p_thread, sig_thread_args_t * p_args);
 void *      signal_thread_fn(void * p_args);
-static void coin_io_read(void * p_arg);
-static void coin_io_send(void * p_arg);
+static void task_io_read(void * p_arg);
+static void task_io_send(void * p_arg);
 
 int main(void)
 {
@@ -237,7 +237,7 @@ int main(void)
 
                     p_cur_ctx->ref_count += 1;
 
-                    tp_status = coin_tpool_submit(p_tp, coin_io_read, p_cur_ctx, NULL);
+                    tp_status = coin_tpool_submit(p_tp, task_io_read, p_cur_ctx, NULL);
                     if (COIN_SUCCESS != tp_status)
                     {
                         LOG_ERROR("Failed to submit to coin_tpool");
@@ -285,7 +285,7 @@ int main(void)
 
                 p_cur_ctx->ref_count += 1;
 
-                tp_status = coin_tpool_submit(p_tp, coin_io_send, p_cur_ctx, NULL);
+                tp_status = coin_tpool_submit(p_tp, task_io_send, p_cur_ctx, NULL);
                 if (COIN_SUCCESS != tp_status)
                 {
                     LOG_ERROR("Failed to submit to coin_tpool");
@@ -431,7 +431,7 @@ void * signal_thread_fn(void * p_args)
     return NULL;
 }
 
-static void coin_io_read(void * p_arg)
+static void task_io_read(void * p_arg)
 {
     assert(NULL != p_arg);
     conn_ctx_t * p_ctx = (conn_ctx_t *)(p_arg);
@@ -466,7 +466,7 @@ static void coin_io_read(void * p_arg)
     }
 }
 
-static void coin_io_send(void * p_arg)
+static void task_io_send(void * p_arg)
 {
     assert(NULL != p_arg);
     conn_ctx_t * p_ctx = (conn_ctx_t *)(p_arg);
