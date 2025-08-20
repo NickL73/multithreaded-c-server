@@ -232,7 +232,7 @@ int main(void)
                     if (0 != err)
                     {
                         LOG_ERROR("Failed to lock mutex");
-                        continue;
+                        goto cleanup_connections;
                     }
 
                     p_cur_ctx->ref_count += 1;
@@ -241,12 +241,15 @@ int main(void)
                     if (COIN_SUCCESS != tp_status)
                     {
                         LOG_ERROR("Failed to submit to coin_tpool");
+                        (void)pthread_mutex_unlock(&(p_cur_ctx->mutex));
+                        goto cleanup_connections;
                     }
 
                     err = pthread_mutex_unlock(&(p_cur_ctx->mutex));
                     if (0 != err)
                     {
                         LOG_ERROR("Failed to unlock mutex");
+                        goto cleanup_connections;
                     }
                 }
             }
