@@ -5,7 +5,7 @@
  * @brief
  */
 #include "common.h"
-#include "concurinc.h"
+#include "concurinc/coin.h"
 #include "connmgr.h"
 #include "netio.h"
 
@@ -238,9 +238,9 @@ int main(void)
                     p_cur_ctx->ref_count += 1;
 
                     tp_status = coin_tpool_submit(p_tp, task_io_read, p_cur_ctx, NULL);
-                    if (COIN_SUCCESS != tp_status)
+                    if ((COIN_SUCCESS != tp_status) && (COIN_CAPACITY_ERROR != tp_status))
                     {
-                        LOG_ERROR("Failed to submit to coin_tpool");
+                        LOG_ERROR("Failed to submit to coin_tpool (%d)", tp_status);
                         (void)pthread_mutex_unlock(&(p_cur_ctx->mutex));
                         goto cleanup_connections;
                     }
@@ -250,6 +250,14 @@ int main(void)
                     {
                         LOG_ERROR("Failed to unlock mutex");
                         goto cleanup_connections;
+                    }
+
+                    /* Keep spinning until the threadpool has enough room for another task. */
+                    if (COIN_CAPACITY_ERROR == tp_status)
+                    {
+                        LOG_WARN("Threadpool task queue is at max capacity. Skipping and will try again.\n");
+                        usleep(1000);
+                        // continue;
                     }
                 }
             }
@@ -286,9 +294,10 @@ int main(void)
                 p_cur_ctx->ref_count += 1;
 
                 tp_status = coin_tpool_submit(p_tp, task_io_send, p_cur_ctx, NULL);
-                if (COIN_SUCCESS != tp_status)
+                if ((COIN_SUCCESS != tp_status) && (COIN_CAPACITY_ERROR != tp_status))
                 {
                     LOG_ERROR("Failed to submit to coin_tpool");
+                    usleep(1000);
                 }
 
                 err = pthread_mutex_unlock(&(p_cur_ctx->mutex));

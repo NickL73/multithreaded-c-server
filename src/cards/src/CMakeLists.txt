@@ -1,0 +1,6 @@
+#if (CARDS_BUILD_SHARED_LIBS)
+#    add_library(cards SHARED cards.c)
+#else ()
+#    add_library(cards STATIC cards.c)
+#endif ()
+add_library(cards STATIC cards.c)

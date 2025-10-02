@@ -4,8 +4,8 @@
  * @date 5/6/25
  * @brief
  */
-#ifndef CONCURINC_H
-#define CONCURINC_H
+#ifndef COIN_CONCURINC_H
+#define COIN_CONCURINC_H
 
 #include <stddef.h>
 
@@ -18,17 +18,18 @@ typedef void (*coin_task_free_arg_func_t)(void *);
 
 typedef enum coin_status_t
 {
-    COIN_SUCCESS,
-    COIN_GENERIC_FAILURE,
-    COIN_INVALID_INPUT,
-    COIN_ALLOCATION_FAILURE,
-    COIN_THREAD_CREATION_FAILURE,
-    COIN_PTHREAD_MUTEX_ERROR,
-    COIN_PTHREAD_COND_ERROR,
-    COIN_PTHREAD_JOIN_ERROR,
-    COIN_PTHREAD_CREATE_ERROR,
-    COIN_PTHREAD_SIGMASK_ERROR,
-    COIN_EMPTY_QUEUE_ERROR,
+    COIN_SUCCESS                 = 0,
+    COIN_GENERIC_FAILURE         = 1,
+    COIN_INVALID_INPUT           = 2,
+    COIN_ALLOCATION_FAILURE      = 3,
+    COIN_THREAD_CREATION_FAILURE = 4,
+    COIN_PTHREAD_MUTEX_ERROR     = 5,
+    COIN_PTHREAD_COND_ERROR      = 6,
+    COIN_PTHREAD_JOIN_ERROR      = 7,
+    COIN_PTHREAD_CREATE_ERROR    = 8,
+    COIN_PTHREAD_SIGMASK_ERROR   = 9,
+    COIN_QUEUE_SYSTEM_ERR        = 10,
+    COIN_CAPACITY_ERROR          = 11
 } coin_status_t;
 
 /**
@@ -146,8 +147,35 @@ coin_status_t coin_tpool_destroy(coin_threadpool_t * p_tpool, int retvals[]);
  *          except for the provided `p_task_arg`, which remains the responsibility
  *          of the caller unless a `free_arg_func` is provided.
  */
-coin_status_t coin_tpool_submit(const coin_threadpool_t * p_tpool, const coin_task_func_t task_func, void * task_arg,
-                                const coin_task_free_arg_func_t task_free_arg_func);
+/**
+ * @brief Submits a task to the threadpool for execution.
+ *
+ * This function adds a task to the threadpool's work queue and signals
+ * worker threads to execute it. The task is defined by a function pointer
+ * and its associated argument. Memory cleanup for the argument can be handled
+ * by providing an optional cleanup callback.
+ *
+ * @param[in] p_tpool A pointer to the threadpool instance. Must not be NULL and
+ *                    must point to a valid threadpool with an initialized context.
+ * @param[in] task_func A pointer to the task function to be executed. Must not be NULL.
+ * @param[in] p_task_arg A pointer to the argument that will be passed to the task function.
+ *                       Must not be NULL.
+ * @param[in] free_arg_func Optional callback function to release memory for the task argument.
+ *                          Can be NULL if no cleanup is needed.
+ *
+ * @return Returns a status code indicating the outcome of the operation:
+ *         - COIN_SUCCESS: The task was successfully added to the queue.
+ *         - COIN_INVALID_INPUT: One or more input parameters were invalid.
+ *         - COIN_ALLOCATION_FAILURE: Memory allocation for the task failed.
+ *         - COIN_PTHREAD_MUTEX_ERROR: A mutex lock or unlock operation failed.
+ *         - COIN_PTHREAD_COND_ERROR: A condition variable signal operation failed.
+ *         - Any other status returned by `coin_queue_push`.
+ *
+ * @note It is the caller's responsibility to ensure the provided task function and
+ *       its argument remain valid for the lifetime of task execution.
+ */
+coin_status_t coin_tpool_submit(const coin_threadpool_t * p_tpool, const coin_task_func_t task_func, void * p_task_arg,
+                                const coin_task_free_arg_func_t free_arg_func);
 
 
-#endif // CONCURINC_H
+#endif // COIN_CONCURINC_H

@@ -1,14 +1,13 @@
 /**
- * @file concurinc.c
+ * @file coin.c
  * @author nick
  * @date 5/7/25
  * @brief
  */
 
+#include "concurinc/coin.h"
 
-#include "concurinc.h"
-
-#include "coin_queue.h"
+#include "cards/queue.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -16,6 +15,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+#define INITIAL_WORK_QUEUE_CAPACITY 64
 
 typedef enum thread_status_t
 {
@@ -35,7 +36,7 @@ typedef struct tpool_ctx
 {
     bool b_shutdown;
 
-    coin_queue_t *  p_work_queue;
+    cards_queue_s * p_work_queue;
     pthread_mutex_t tpool_queue_mutex;
     pthread_cond_t  tpool_queue_cond;
 
@@ -88,7 +89,7 @@ static coin_status_t coin_tpool_stop_workers(const coin_threadpool_t * p_tpool);
  *
  * @note It is the caller's responsibility to destroy the threadpool by calling
  *       an appropriate cleanup function, such as `coin_tpool_destroy`, when it is
- *       no longer needed.
+ *       no longer necessary.
  *
  * @warning This function uses dynamically allocated memory. If the function fails,
  *          ensure proper cleanup of partially allocated resources (if applicable).
@@ -205,7 +206,7 @@ coin_status_t coin_tpool_wait(const coin_threadpool_t * p_tpool)
             }
         }
 
-        if (0 < p_tpool->p_ctx->p_work_queue->size)
+        if (0 < p_tpool->p_ctx->p_work_queue->num_items)
         {
             err = pthread_mutex_unlock(&(p_tpool->p_ctx->active_tasks_mutex));
             if (0 != err)
@@ -231,7 +232,7 @@ coin_status_t coin_tpool_wait(const coin_threadpool_t * p_tpool)
             break;
         }
 
-        b_isempty = (0 == p_tpool->p_ctx->p_work_queue->size);
+        b_isempty = (0 == p_tpool->p_ctx->p_work_queue->num_items);
 
         err = pthread_mutex_unlock(&(p_tpool->p_ctx->tpool_queue_mutex));
         if (0 != err)
@@ -319,42 +320,39 @@ end:
 }
 
 /**
- * @brief Submits a task to the specified threadpool for execution.
+ * @brief Submits a task to the threadpool for execution.
  *
- * This function creates a task object encapsulating the provided task function,
- * its arguments, and an optional cleanup function. The task is then pushed
- * onto the threadpool's work queue, which is subsequently processed by worker
- * threads.
+ * This function adds a task to the threadpool's work queue and signals
+ * worker threads to execute it. The task is defined by a function pointer
+ * and its associated argument. Memory cleanup for the argument can be handled
+ * by providing an optional cleanup callback.
  *
- * @param[in] p_tpool A pointer to the threadpool structure. Must not be NULL.
- * @param[in] task_func A pointer to the function that defines the task to be executed. Must not be NULL.
- * @param[in] p_task_arg A pointer to the arguments for the task function. Must not be NULL.
- * @param[in] free_arg_func A pointer to a function that frees the resources
- *                          associated with `p_task_arg`. Can be NULL if no cleanup is required.
+ * @param[in] p_tpool A pointer to the threadpool instance. Must not be NULL and
+ *                    must point to a valid threadpool with an initialized context.
+ * @param[in] task_func A pointer to the task function to be executed. Must not be NULL.
+ * @param[in] p_task_arg A pointer to the argument that will be passed to the task function.
+ *                       Must not be NULL.
+ * @param[in] free_arg_func Optional callback function to release memory for the task argument.
+ *                          Can be NULL if no cleanup is needed.
  *
  * @return Returns a status code indicating the outcome of the operation:
- *         - COIN_SUCCESS: The task was successfully submitted.
+ *         - COIN_SUCCESS: The task was successfully added to the queue.
  *         - COIN_INVALID_INPUT: One or more input parameters were invalid.
- *         - COIN_ALLOCATION_FAILURE: Memory allocation for the task object failed.
- *         - COIN_PTHREAD_MUTEX_ERROR: Mutex locking or unlocking encountered an error.
- *         - COIN_PTHREAD_COND_ERROR: Condition variable signaling encountered an error.
- *         - Any status returned by `coin_queue_push`.
+ *         - COIN_ALLOCATION_FAILURE: Memory allocation for the task failed.
+ *         - COIN_PTHREAD_MUTEX_ERROR: A mutex lock or unlock operation failed.
+ *         - COIN_PTHREAD_COND_ERROR: A condition variable signal operation failed.
+ *         - Any other status returned by `coin_queue_push`.
  *
- * @note The caller is responsible for ensuring that the threadpool is properly
- *       initialized before invoking this function. If `p_task_arg` requires cleanup,
- *       ensure to provide a valid `free_arg_func` to handle resource deallocation.
- *
- * @warning If the function encounters an error, the task is not submitted to the
- *          threadpool. Any allocated resources for the task will be cleaned up,
- *          except for the provided `p_task_arg`, which remains the responsibility
- *          of the caller unless a `free_arg_func` is provided.
- */
+ * @note It is the caller's responsibility to ensure the provided task function and
+ *       its argument remain valid for the lifetime of task execution.
+ * */
 coin_status_t coin_tpool_submit(const coin_threadpool_t * p_tpool, const coin_task_func_t task_func, void * p_task_arg,
                                 const coin_task_free_arg_func_t free_arg_func)
 {
-    coin_status_t status = COIN_GENERIC_FAILURE;
-    coin_task_t * p_task = NULL;
-    int           err    = -1;
+    coin_status_t status    = COIN_GENERIC_FAILURE;
+    cards_err_e   cards_err = CARDS_GENERIC_ERROR;
+    coin_task_t * p_task    = NULL;
+    int           err       = -1;
 
     if ((NULL == p_tpool) || (NULL == p_tpool->p_ctx) || (NULL == task_func) || (NULL == p_task_arg))
     {
@@ -380,16 +378,29 @@ coin_status_t coin_tpool_submit(const coin_threadpool_t * p_tpool, const coin_ta
         goto cleanup_task;
     }
 
-    status = coin_queue_push(p_tpool->p_ctx->p_work_queue, p_task);
-    if (COIN_SUCCESS != status)
+    cards_err = cards_queue_enqueue(p_tpool->p_ctx->p_work_queue, p_task);
+    if (CARDS_SUCCESS != cards_err)
     {
         (void)pthread_mutex_unlock(&(p_tpool->p_ctx->tpool_queue_mutex));
+        if (CARDS_MAX_CAPACITY_ERROR == cards_err)
+        {
+            status = COIN_CAPACITY_ERROR;
+        }
+        else
+        {
+            status = COIN_QUEUE_SYSTEM_ERR;
+        }
         goto cleanup_task;
     }
+
+    p_task = NULL; /* Ownership semantics. The thread pool owns the task pointer now */
 
     err = pthread_cond_signal(&(p_tpool->p_ctx->tpool_queue_cond));
     if (0 != err)
     {
+        /* The task is already on the queue, so not doing cleanup. It'll be cleaned up as the thread
+         * pool shuts down. We don't have ownership anymore.
+         */
         (void)pthread_mutex_unlock(&(p_tpool->p_ctx->tpool_queue_mutex));
         status = COIN_PTHREAD_COND_ERROR;
         goto end;
@@ -399,8 +410,10 @@ coin_status_t coin_tpool_submit(const coin_threadpool_t * p_tpool, const coin_ta
     if (0 != err)
     {
         status = COIN_PTHREAD_MUTEX_ERROR;
+        goto end;
     }
 
+    status = COIN_SUCCESS;
     return status;
 
 cleanup_task:
@@ -440,9 +453,9 @@ end:
  */
 static void * coin_thread_worker(void * p_ctx)
 {
-    int           err      = 0;
-    coin_status_t coin_err = COIN_GENERIC_FAILURE;
-    coin_task_t * p_task   = NULL;
+    int           err       = 0;
+    cards_err_e   cards_err = CARDS_GENERIC_ERROR;
+    coin_task_t * p_task    = NULL;
 
     tpool_ctx_t * p_tpool_ctx = (tpool_ctx_t *)p_ctx;
     assert(p_tpool_ctx);
@@ -457,8 +470,8 @@ static void * coin_thread_worker(void * p_ctx)
             break;
         }
 
-        /* If still running, wait until there's some work to do. Release lock and wait. */
-        while ((!p_tpool_ctx->b_shutdown) && (0 == p_tpool_ctx->p_work_queue->size))
+        /* If still running, wait until there's some work to do. Release the lock and wait. */
+        while ((!p_tpool_ctx->b_shutdown) && (0 == p_tpool_ctx->p_work_queue->num_items))
         {
             err = pthread_cond_wait(&p_tpool_ctx->tpool_queue_cond, &p_tpool_ctx->tpool_queue_mutex);
             if (0 != err)
@@ -478,8 +491,8 @@ static void * coin_thread_worker(void * p_ctx)
         }
 
         /* Try to pop a work item */
-        coin_err = coin_queue_pop(p_tpool_ctx->p_work_queue, &p_task);
-        if ((COIN_SUCCESS != coin_err) || (NULL == p_task))
+        cards_err = cards_queue_dequeue(p_tpool_ctx->p_work_queue, (void **)&p_task);
+        if ((CARDS_SUCCESS != cards_err) || (NULL == p_task))
         {
             /* The state of the queue is corrupted. This shouldn't happen. Bail out. Don't bother checking return
              * values, because we're already on the way out for an error condition.
@@ -493,7 +506,7 @@ static void * coin_thread_worker(void * p_ctx)
 
 
         /* Check once more if there's work on the queue, and if so, let somebody know about it */
-        if (0 != p_tpool_ctx->p_work_queue->size)
+        if (0 != p_tpool_ctx->p_work_queue->num_items)
         {
             err = pthread_cond_signal(&(p_tpool_ctx->tpool_queue_cond));
             if (0 != err)
@@ -517,16 +530,16 @@ static void * coin_thread_worker(void * p_ctx)
         }
         p_tpool_ctx->active_tasks++;
 
+        err = pthread_mutex_unlock(&p_tpool_ctx->active_tasks_mutex);
+        if (0 != err)
+        {
+            break;
+        }
+
         err = pthread_cond_broadcast(&(p_tpool_ctx->active_tasks_cond));
         if (0 != err)
         {
             (void)pthread_mutex_unlock(&(p_tpool_ctx->active_tasks_mutex));
-            break;
-        }
-
-        err = pthread_mutex_unlock(&p_tpool_ctx->active_tasks_mutex);
-        if (0 != err)
-        {
             break;
         }
 
@@ -577,9 +590,9 @@ static void * coin_thread_worker(void * p_ctx)
     /* If exiting the main loop, I don't really care about error conditions. It's a moot point */
     (void)pthread_mutex_lock(&p_tpool_ctx->tpool_queue_mutex);
 
-    /* The main thread loop only breaks on two conditions: first, if the shutdown flag was given. Second, on a fatal
-     * state for thread. If one thread gets into a fatal error condition, there's not much realistic action to take and
-     * the safest best is to just shut everything down, so set the global shutdown flag and let everybody else know
+    /* The main thread loop only breaks on two conditions: first if the shutdown flag was given, and second, on a fatal
+     * state for the thread. If one thread gets into a fatal error condition, there's not much realistic action to take.
+     * The safest best is to just shut everything down, so set the global shutdown flag and let everybody else know
      * to bail out too.
      */
     if (!p_tpool_ctx->b_shutdown)
@@ -621,15 +634,23 @@ static coin_status_t coin_tpool_ctx_init(tpool_ctx_t ** pp_ctx)
 {
     assert(pp_ctx);
 
-    coin_status_t  status  = COIN_GENERIC_FAILURE;
-    coin_queue_t * p_queue = NULL;
-    int            err     = 1;
+    coin_status_t   status    = COIN_GENERIC_FAILURE;
+    cards_err_e     cards_err = CARDS_GENERIC_ERROR;
+    cards_queue_s * p_queue   = NULL;
+    int             err       = 1;
+
+    p_queue = calloc(1, sizeof(cards_queue_s));
+    if (NULL == p_queue)
+    {
+        status = COIN_ALLOCATION_FAILURE;
+        goto end;
+    }
 
     tpool_ctx_t * p_ctx = calloc(1, sizeof(tpool_ctx_t));
     if (NULL == p_ctx)
     {
         status = COIN_ALLOCATION_FAILURE;
-        goto end;
+        goto cleanup_queue_allocation;
     }
 
     err = pthread_mutex_init(&(p_ctx->tpool_queue_mutex), NULL);
@@ -646,9 +667,10 @@ static coin_status_t coin_tpool_ctx_init(tpool_ctx_t ** pp_ctx)
         goto cleanup_queue_mutex;
     }
 
-    status = coin_queue_init(&p_queue);
-    if (COIN_SUCCESS != status)
+    cards_err = cards_queue_init(p_queue, INITIAL_WORK_QUEUE_CAPACITY, true);
+    if (CARDS_SUCCESS != cards_err)
     {
+        status = COIN_QUEUE_SYSTEM_ERR;
         goto cleanup_queue_cond;
     }
 
@@ -656,7 +678,7 @@ static coin_status_t coin_tpool_ctx_init(tpool_ctx_t ** pp_ctx)
     if (0 != err)
     {
         status = COIN_PTHREAD_MUTEX_ERROR;
-        goto cleanup_queue;
+        goto deinitialize_queue;
     }
 
     err = pthread_cond_init(&(p_ctx->active_tasks_cond), NULL);
@@ -681,9 +703,8 @@ static coin_status_t coin_tpool_ctx_init(tpool_ctx_t ** pp_ctx)
 cleanup_tasks_mutex:
     (void)pthread_mutex_destroy(&(p_ctx->active_tasks_mutex));
 
-cleanup_queue:
-    (void)coin_queue_destroy(p_queue);
-    p_queue = NULL;
+deinitialize_queue:
+    (void)cards_queue_deinit(p_queue);
 
 cleanup_queue_cond:
     (void)pthread_cond_destroy(&(p_ctx->tpool_queue_cond));
@@ -694,6 +715,10 @@ cleanup_queue_mutex:
 cleanup_ctx:
     free(p_ctx);
     p_ctx = NULL;
+
+cleanup_queue_allocation:
+    free(p_queue);
+    p_queue = NULL;
 
 end:
     return status;
@@ -728,8 +753,9 @@ static coin_status_t coin_tpool_ctx_destroy(tpool_ctx_t * p_ctx)
 {
     assert(p_ctx);
 
-    coin_status_t status = COIN_GENERIC_FAILURE;
-    int           err    = 0;
+    coin_status_t status    = COIN_GENERIC_FAILURE;
+    cards_err_e   cards_err = CARDS_GENERIC_ERROR;
+    int           err       = 0;
 
     err = pthread_cond_destroy(&(p_ctx->tpool_queue_cond));
     if (0 != err)
@@ -745,27 +771,31 @@ static coin_status_t coin_tpool_ctx_destroy(tpool_ctx_t * p_ctx)
         goto end;
     }
 
-    status = coin_queue_destroy(p_ctx->p_work_queue);
-    if (COIN_SUCCESS != status)
+
+    cards_err = cards_queue_deinit(p_ctx->p_work_queue);
+    if (CARDS_SUCCESS != cards_err)
     {
+        status = COIN_QUEUE_SYSTEM_ERR;
         goto end;
     }
 
-    p_ctx->p_work_queue = NULL;
 
-    err = pthread_cond_destroy(&(p_ctx->active_tasks_cond));
+    err = pthread_cond_destroy(&(p_ctx->tpool_queue_cond));
     if (0 != err)
     {
         status = COIN_PTHREAD_COND_ERROR;
         goto end;
     }
 
-    err = pthread_mutex_destroy(&(p_ctx->active_tasks_mutex));
+    err = pthread_mutex_destroy(&(p_ctx->tpool_queue_mutex));
     if (0 != err)
     {
         status = COIN_PTHREAD_MUTEX_ERROR;
         goto end;
     }
+
+    free(p_ctx->p_work_queue);
+    p_ctx->p_work_queue = NULL;
 
     free(p_ctx);
     p_ctx = NULL;
@@ -841,7 +871,6 @@ static coin_status_t coin_initialize_workers(tpool_ctx_t * p_ctx, coin_tpool_thr
         goto cleanup_attr;
     }
 
-    // Start creating the threads
     coin_tpool_thread_t * p_threads = calloc(num_workers, sizeof(coin_tpool_thread_t));
     if (NULL == p_threads)
     {
@@ -969,4 +998,4 @@ end:
     return status;
 }
 
-/* END OF FILE concurinc.c */
+/* END OF FILE coin.c */
